@@ -74,13 +74,14 @@ func (g *Gateway) snapshot(w http.ResponseWriter, r *http.Request, route Route) 
 	if status != http.StatusNotModified {
 		h.Set("Content-Length", strconv.Itoa(len(record.Result.HTML)))
 	}
+	if receipt, ok := w.(*receipt); ok {
+		receipt.cached = true
+		receipt.expected = int64(len(record.Result.HTML))
+	}
 	w.WriteHeader(status)
-	wrote := false
 	if r.Method != http.MethodHead && status != http.StatusNotModified {
 		_, _ = w.Write([]byte(record.Result.HTML))
-		wrote = record.Result.Status == 200
 	}
-	g.logger.Info("crawler_response", "crawler_claim", route.Crawler, "path", r.URL.EscapedPath(), "status", status, "cache", outcome, "cached_response", true, "snapshot_served", wrote)
 	return true
 }
 func notModified(r *http.Request, etag string, created time.Time) bool {

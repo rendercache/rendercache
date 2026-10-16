@@ -49,9 +49,10 @@ func TestRunAndGracefulShutdown(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	var logs lockedBuffer
+	dataDir := t.TempDir()
 	done := make(chan error, 1)
 	go func() {
-		done <- run(ctx, []string{"serve", "--origin", upstream.URL, "--listen", "127.0.0.1:0", "--admin-listen", "127.0.0.1:0"}, io.Discard, &logs)
+		done <- run(ctx, []string{"serve", "--origin", upstream.URL, "--data-dir", dataDir, "--listen", "127.0.0.1:0", "--admin-listen", "127.0.0.1:0"}, io.Discard, &logs)
 	}()
 	var entry struct {
 		Public string `json:"public"`
@@ -299,5 +300,31 @@ func TestServeWarmsBeforeBotAndReusesDisk(t *testing.T) {
 	}
 	if s.Warming.Cached != 2 || s.Warming.Successes != 0 {
 		t.Fatal(fmt.Sprintf("fresh disk snapshots were not reused: %+v", s))
+	}
+}
+
+type blockedLogWriter struct{ release <-chan struct{} }
+
+func (w blockedLogWriter) Write(p []byte) (int, error) { <-w.release; return len(p), nil }
+func TestLifecycleLoggingCannotHoldShutdown(t *testing.T) {
+	release := make(chan struct{})
+	defer close(release)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	c := config.Default()
+	c.Origin = "http://127.0.0.1:1"
+	c.Listen = "127.0.0.1:0"
+	c.AdminListen = "127.0.0.1:0"
+	c.WarmEnabled = false
+	c.DataDir = t.TempDir()
+	path := filepath.Join(t.TempDir(), "config.json")
+	body, _ := json.Marshal(c)
+	if err := os.WriteFile(path, body, 0600); err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now()
+	err := run(ctx, []string{"serve", "--config", path}, io.Discard, blockedLogWriter{release})
+	if err == nil || !strings.Contains(err.Error(), "lifecycle log write timed out") || time.Since(started) > time.Second {
+		t.Fatal(err, time.Since(started))
 	}
 }

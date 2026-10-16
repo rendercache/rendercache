@@ -2,7 +2,7 @@
 
 A self-hosted pre-render cache for JavaScript sites, designed to prepare HTML before bots and AI crawlers arrive.
 
-**Prototype in progress — session 4 of 6.** The service warms JavaScript pages from sitemaps, stores rendered responses and serves them to recognized bots. Humans receive the ordinary app. Fresh snapshots return `HIT`; expired snapshots return `STALE` while a deduplicated refresh runs in the background. A cold `MISS` proxies the origin immediately and requests background rendering. Shell detection, the richer status/demo UI and release packaging are still upcoming.
+**Prototype in progress — session 5 of 6.** The service warms JavaScript pages from sitemaps, stores rendered responses and serves them to recognized bots. Humans receive the ordinary app. Fresh snapshots return `HIT`; expired snapshots return `STALE` while a deduplicated refresh runs in the background. A cold `MISS` proxies the origin immediately and requests background rendering. The protected admin page compares raw HTML with a saved snapshot, highlights missing text and shows rotating crawler delivery records. Release packaging and storage quotas are still upcoming.
 
 ## Run the current checkpoint
 
@@ -116,7 +116,9 @@ The endpoint accepts exactly one public URL (or root-relative path) and returns 
 | --- | --- | --- |
 | `origin` | required | Fixed upstream site root |
 | `public_url` | origin | Public root used for URL validation and snapshot identity |
-| `data_dir` | `data/snapshots` | Local record directory |
+| `data_dir` | `data/snapshots` | Local snapshot and delivery-log directory |
+| `delivery_log_max_bytes` | `10485760` | Maximum bytes per log file; 4096 to 1 GiB |
+| `delivery_log_backups` | `3` | Rotated files retained in addition to current file; 1 to 10 |
 | `chrome_path` | auto-detect | Local browser executable |
 | `chrome_no_sandbox` | `false` | Explicit browser sandbox opt-out |
 | `render_timeout` | `30s` | Hard deadline including capacity wait/startup |
@@ -148,11 +150,33 @@ The endpoint accepts exactly one public URL (or root-relative path) and returns 
 | `shutdown_timeout` | `10s` | Graceful shutdown deadline |
 | `bots` | search, AI and preview crawler patterns | Case-insensitive user-agent substring matches |
 
-Every admin route requires `Authorization: Bearer <token>` when a token is configured. Use the environment variable rather than committing a real token. `/healthz` reports process health; `/status` reports routing counters and reports warming status and whether automatic warming is enabled; shows whether snapshot serving is enabled. These endpoints are not mounted on the public listener. Public `/status` requests still go to the origin.
+Every admin route requires `Authorization: Bearer <token>` or HTTP Basic authentication (username `rendercache`, password the token) when a token is configured. Browsers receive a Basic challenge. Use HTTPS or a local tunnel for remote administration; Basic and bearer credentials both require transport protection. Use the environment variable rather than committing a real token. `/healthz` reports process health; `/status` reports routing counters and reports warming status and whether automatic warming is enabled; shows whether snapshot serving is enabled. These endpoints are not mounted on the public listener. Public `/status` requests still go to the origin.
 
 Only GET/HEAD document requests without cookies or authorization are eligible for the snapshot path. API paths, non-HTML file extensions, non-HTML Accept headers, range/upgrade requests and `Cache-Control: no-store` bypass it. A user-agent match is a crawler claim, not an authenticated identity. Every upstream response varies on User-Agent, Cookie and Authorization; upstream cookies, status codes and content are preserved. Incoming forwarding claims are removed before fresh forwarding headers are generated. Keep TLS and any trusted edge routing in front of this HTTP service.
 
-Current JSON stderr diagnostics distinguish HIT/STALE/MISS and whether HTML bytes were delivered. They are not yet the persistent rotating delivery log planned for session five. Sitemap warming is proactive; eligible misses/stale requests can also request bounded background work. Manual `render` always performs new browser work. Bots' query strings are forwarded unchanged, but query strings are omitted from diagnostic logs.
+Crawler delivery receipts are written as rotating JSON lines under `data_dir/delivery/crawler.jsonl`; see the diagnostics section below. Stderr carries only the two process lifecycle messages. Sitemap warming is proactive; eligible misses/stale requests can also request bounded background work. Manual `render` always performs new browser work. Bots' query strings are forwarded unchanged, but query strings are omitted from diagnostic logs.
+
+## What the bot sees
+
+Open `http://127.0.0.1:9090/` on the separate admin listener. When a token is configured, sign in as `rendercache` with the token as password. With no token, the existing loopback-only read/diagnostic policy applies; purge still requires a token. The UI and APIs are never mounted on the public listener. Do not expose an unauthenticated admin listener through a tunnel or proxy.
+
+The page shows sitemap coverage, queue work, errors and up to 100 extra request-page details. Sitemap `ready` describes only discovered sitemap pages; request-page failures have a separate counter. Logs and details refresh with the Refresh status button; comparison and simulation are explicit actions.
+
+Enter a configured-site URL (or `/path`) and select **Compare HTML**. `POST /diagnose` accepts JSON `{"url":"/path"}` and compares a fresh public raw-origin fetch with an existing disk snapshot. It never starts a browser job. A missing snapshot returns 404; use sitemap warming, the manual render command or authenticated purge first. Diagnostics allow two concurrent operations, have a five-second raw-fetch deadline and cap raw and rendered diagnostic HTML at 1 MiB each. Redirects, non-200/non-HTML/private/no-store/cookie-setting responses are withheld. Foreign URLs, API/assets, cross-origin browser submissions and oversized/invalid JSON are rejected. Fetches never inherit admin/visitor credentials, cookies or other headers. Raw bodies are neither persisted nor logged, and diagnostic errors never replace a saved snapshot.
+
+Text extraction ignores head, script, style, template, noscript, hidden and aria-hidden subtrees. A likely shell has at least 10 rendered words, at least 10 words missing from the raw text, and raw text at most 20% of rendered word count. Highlighting compares case-folded word occurrences, stripping surrounding punctuation. This is an approximate diagnostic: it does not compute CSS visibility/layout, handle all languages equally or measure search ranking. Text inserted alongside existing words may be highlighted differently from a phrase diff. Both captures use text nodes, never executable previews; the admin page also enforces a restrictive content security policy.
+
+**Simulate bot fetch** calls `POST /simulate` with the same JSON URL, sends a local credential-free GET using the first configured crawler pattern through the real proxy/snapshot handler, discards its body and emits a receipt marked `simulated`. It can enqueue a cold/stale refresh through normal request handling, but never waits for Chrome. No external crawler visited. A cold origin fetch is limited to five seconds. Empty crawler rules or disabled logging make simulation unavailable.
+
+### Delivery log semantics
+
+Each recognized crawler claim is recorded after response handling, including private/API/protocol bypasses. Events contain a bounded crawler pattern, path without query/fragment, method, actual response status, HIT/STALE/MISS/BYPASS, snapshot age, HTTP body bytes accepted by the response writer and duration. No request headers, raw user agents, query strings, raw page bodies or upstream error strings enter these records. Paths themselves may contain sensitive data; control access and retention accordingly. Differing query variants intentionally share a logged path.
+
+`cached_response` includes saved HTML, redirects and removals. `full_snapshot_html` requires a complete successful GET of a nonempty 200 snapshot with no write failure. HEAD, 304, redirects, removals, misses and partial writes are false. These are server-side write receipts, not proof that a remote client read the body. Protocol upgrades are labeled `protocol_upgrade`; tunneled traffic is outside HTTP body accounting. A user-agent match is a claim, not verified identity; receipts do not prove indexing or AI citation.
+
+Logging uses a 256-event nonblocking queue and one file writer, a 100-event in-memory recent list, 512-byte paths and 128-byte crawler patterns. Defaults retain the current 10 MiB file plus three rotated backups (about 40 MiB maximum). A full queue drops receipts and increments `dropped`; write/open/rotation failures increment `failures` and expose a bounded operation name. These counters and recent receipts appear in `/status` under `delivery_log`. `accepted` means queued; `written` means a successful file write, not fsync durability. Counts/recent receipts reset on restart; files survive. One process must own each data directory. Incomplete final JSON lines can occur after a crash or failed write; readers should skip them.
+
+Startup fails if the log cannot be opened. Runtime logging failures do not stall responses or grow files beyond the configured rotation limit. Shutdown closes admission and drains with a two-second deadline; an unresponsive filesystem can leave the writer pending until process exit. Stderr lifecycle writes each have a 100 ms wait limit and report write failures/timeouts as a CLI error. Per-request upstream error text is omitted. Snapshots have independent durability guarantees; these delivery logs are best-effort operational records.
 
 ## Roadmap
 
@@ -162,7 +186,7 @@ Session 3 complete: bounded sitemap/index/gzip discovery, scheduled warming, ded
 
 Session 4 complete: fresh/stale/cold serving, bounded refresh admission, HTTP validators, redirect/removal outcomes, privacy withdrawal and authenticated purge API.
 
-Session 5: raw-versus-rendered shell detection, rotating bot delivery logs and one protected status/demo page.
+Session 5 complete: raw-versus-rendered shell detection, rotating crawler delivery receipts, bounded request-page error details and one protected status/demo page.
 
 Session 6: complete integration checks, Docker packaging, deployment guides and initial release artifacts.
 

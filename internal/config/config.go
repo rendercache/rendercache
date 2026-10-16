@@ -17,6 +17,8 @@ import (
 
 // Config is the on-disk JSON configuration. CLI flags override these values.
 type Config struct {
+	DeliveryLogMaxBytes int64    `json:"delivery_log_max_bytes"`
+	DeliveryLogBackups  int      `json:"delivery_log_backups"`
 	Origin              string   `json:"origin"`
 	SnapshotEnabled     bool     `json:"snapshot_enabled"`
 	SnapshotTTL         string   `json:"snapshot_ttl"`
@@ -54,7 +56,7 @@ type Config struct {
 
 func Default() Config {
 	return Config{
-		SnapshotEnabled: true, SnapshotTTL: "24h", RequestPageLimit: 256, Origin: "", PublicURL: "", Listen: ":8080", AdminListen: "127.0.0.1:9090",
+		DeliveryLogMaxBytes: 10 << 20, DeliveryLogBackups: 3, SnapshotEnabled: true, SnapshotTTL: "24h", RequestPageLimit: 256, Origin: "", PublicURL: "", Listen: ":8080", AdminListen: "127.0.0.1:9090",
 		OriginTimeout: "30s", ShutdownTimeout: "10s",
 		DataDir: "data/snapshots", RenderTimeout: "30s", RenderSettle: "500ms", MaxHTMLBytes: 8 << 20, RenderConcurrency: 1,
 		WarmEnabled: true, SitemapURLs: []string{"/sitemap.xml"}, WarmInterval: "24h", SitemapInterval: "15m",
@@ -131,6 +133,9 @@ func (c Config) SiteURL() string {
 }
 
 func (c Config) Validate() error {
+	if c.DeliveryLogMaxBytes < 4096 || c.DeliveryLogMaxBytes > 1<<30 || c.DeliveryLogBackups < 1 || c.DeliveryLogBackups > 10 {
+		return errors.New("invalid delivery log limits (4096..1GiB bytes, 1..10 backups)")
+	}
 	ttl, err := time.ParseDuration(c.SnapshotTTL)
 	if err != nil || ttl < time.Second {
 		return errors.New("snapshot_ttl must be at least 1s")

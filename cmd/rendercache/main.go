@@ -13,10 +13,12 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
 	"github.com/rendercache/rendercache/internal/config"
+	"github.com/rendercache/rendercache/internal/delivery"
 	"github.com/rendercache/rendercache/internal/proxy"
 	"github.com/rendercache/rendercache/internal/render"
 	"github.com/rendercache/rendercache/internal/sitemap"
@@ -40,7 +42,7 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) error {
 		return nil
 	}
 	if args[0] == "version" {
-		fmt.Fprintln(out, "rendercache 0.1.0-dev (session 4)")
+		fmt.Fprintln(out, "rendercache 0.1.0-dev (session 5)")
 		return nil
 	}
 	if args[0] != "serve" && args[0] != "render" && args[0] != "inspect" {
@@ -162,6 +164,11 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) error {
 		return err
 	}
 	defer g.Close()
+	receipts, err := delivery.Open(filepath.Join(c.DataDir, "delivery"), c.DeliveryLogMaxBytes, c.DeliveryLogBackups)
+	if err != nil {
+		return fmt.Errorf("delivery log: %w", err)
+	}
+	g.SetDeliveryLog(receipts)
 	publicLn, err := net.Listen("tcp", c.Listen)
 	if err != nil {
 		return fmt.Errorf("public listener: %w", err)
@@ -214,7 +221,7 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) error {
 	}{{publicServer, publicLn}, {adminServer, adminLn}} {
 		go func(s *http.Server, l net.Listener) { errCh <- s.Serve(l) }(entry.s, entry.l)
 	}
-	logger.Info("listening", "public", publicLn.Addr().String(), "admin", adminLn.Addr().String(), "origin", c.Origin, "warming_enabled", c.WarmEnabled, "snapshot_serving_enabled", c.SnapshotEnabled)
+	lifecycleErr := boundedInfo(logger, "listening", "public", publicLn.Addr().String(), "admin", adminLn.Addr().String(), "origin", c.Origin, "warming_enabled", c.WarmEnabled, "snapshot_serving_enabled", c.SnapshotEnabled)
 	var serveErr error
 	select {
 	case <-ctx.Done():
@@ -240,15 +247,38 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) error {
 			shutdownErr = err
 		}
 	}
-	logger.Info("stopped")
+	logCtx, logCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	logErr := g.FlushDeliveryLog(logCtx)
+	logCancel()
+	lifecycleErr = errors.Join(lifecycleErr, boundedInfo(logger, "stopped"))
 	if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
-		return serveErr
+		return errors.Join(serveErr, logErr, lifecycleErr)
 	}
-	return shutdownErr
+	return errors.Join(shutdownErr, logErr, lifecycleErr)
 }
 
 func newRenderer(c config.Config) (*render.Chrome, error) {
 	timeout, _ := time.ParseDuration(c.RenderTimeout)
 	settle, _ := time.ParseDuration(c.RenderSettle)
 	return render.NewChrome(render.Options{ChromePath: c.ChromePath, NoSandbox: c.ChromeNoSandbox, Timeout: timeout, Settle: settle, ReadySelector: c.ReadySelector, MaxHTMLBytes: c.MaxHTMLBytes, AllowedOrigins: c.RenderAllowOrigins, Concurrency: c.RenderConcurrency})
+}
+
+// Only two lifecycle messages are emitted per process. A stuck stderr consumer
+// may strand at most two writes; it must never hold shutdown indefinitely.
+func boundedInfo(logger *slog.Logger, message string, args ...any) error {
+	done := make(chan error, 1)
+	record := slog.NewRecord(time.Now(), slog.LevelInfo, message, 0)
+	record.Add(args...)
+	go func() { done <- logger.Handler().Handle(context.Background(), record) }()
+	timer := time.NewTimer(100 * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case err := <-done:
+		if err != nil {
+			return fmt.Errorf("lifecycle log write failed: %w", err)
+		}
+		return nil
+	case <-timer.C:
+		return errors.New("lifecycle log write timed out")
+	}
 }

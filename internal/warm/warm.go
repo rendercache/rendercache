@@ -65,6 +65,9 @@ type PageStatus struct {
 type Status struct {
 	Enabled           bool         `json:"enabled"`
 	State             string       `json:"state"`
+	ExtraDetails      []PageStatus `json:"extra_page_details"`
+	ExtraOmitted      int          `json:"extra_pages_omitted"`
+	ExtraFailed       int          `json:"extra_failed_pages"`
 	ExtraPages        int          `json:"extra_pages"`
 	RequestRejections uint64       `json:"request_rejections"`
 	Discovered        int          `json:"discovered"`
@@ -443,6 +446,38 @@ func (m *Manager) Status() Status {
 			s.PagesOmitted++
 		}
 	}
+	extraKeys := make([]string, 0, len(m.extras))
+	for key := range m.extras {
+		extraKeys = append(extraKeys, key)
+	}
+	sort.Slice(extraKeys, func(i, j int) bool { return m.extras[extraKeys[i]].page.URL < m.extras[extraKeys[j]].page.URL })
+	s.ExtraDetails = []PageStatus{}
+	for i, key := range extraKeys {
+		e := m.extras[key]
+		state := "waiting"
+		if e.cached {
+			state = "fresh"
+			if !now.Before(e.created.Add(m.opts.RefreshInterval)) {
+				state = "stale"
+			}
+		}
+		if e.lastError != "" {
+			state = "failed"
+			s.ExtraFailed++
+		}
+		if e.queued {
+			state = "queued"
+		}
+		if e.active {
+			state = "rendering"
+		}
+		if i < 100 {
+			s.ExtraDetails = append(s.ExtraDetails, PageStatus{URL: e.page.URL, Cached: e.cached, State: state, SnapshotAt: e.created, NextAttempt: e.due, LastAttempt: e.lastAttempt, Failures: e.failures, LastError: e.lastError})
+		} else {
+			s.ExtraOmitted++
+		}
+	}
+
 	if m.scanned && s.Missing == 0 && s.Stale == 0 && s.Failed == 0 {
 		s.State = "ready"
 	}
