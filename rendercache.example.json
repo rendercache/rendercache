@@ -1,0 +1,8 @@
+{
+  "origin": "http://127.0.0.1:8081",
+  "listen": "127.0.0.1:8080",
+  "admin_listen": "127.0.0.1:9090",
+  "origin_timeout": "30s",
+  "shutdown_timeout": "10s",
+  "bots": ["Googlebot", "bingbot", "OAI-SearchBot", "GPTBot", "ChatGPT-User", "ClaudeBot", "Claude-SearchBot", "Claude-User", "PerplexityBot", "Perplexity-User", "facebookexternalhit", "Twitterbot", "LinkedInBot"]
+}

@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>RenderCache JavaScript fixture</title><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body><main id="app"></main><noscript>This page requires JavaScript.</noscript>
+<script>
+window.rendercacheReady = false;
+fetch('/api/page').then(r => { if (!r.ok) throw new Error('page fetch failed'); return r.json(); }).then(page => {
+ document.title = location.pathname === '/about' ? 'About the fixture' : page.title;
+ const app = document.getElementById('app');
+ const h = document.createElement('h1'); h.textContent = document.title;
+ const p = document.createElement('p'); p.textContent = page.text;
+ app.append(h, p); app.dataset.ready = 'true';
+ window.rendercacheReady = true;
+});
+</script></body></html>
