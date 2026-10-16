@@ -1,0 +1,26 @@
+services:
+  rendercache:
+    build:
+      context: ..
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - snapshots:/data
+      - ./container.json:/etc/rendercache.json:ro
+    environment:
+      RENDERCACHE_ADMIN_TOKEN: ${RENDERCACHE_ADMIN_TOKEN:?Set an admin token}
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=536870912,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    mem_limit: 1g
+    cpus: 1.0
+    shm_size: 256m
+    stop_grace_period: 20s
+    restart: unless-stopped
+volumes:
+  snapshots:

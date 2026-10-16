@@ -3,7 +3,9 @@ package proxy
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"io"
 	"log"
 	"log/slog"
@@ -91,6 +93,8 @@ func acceptsHTML(value string) bool {
 }
 
 type Gateway struct {
+	admission   chan struct{}
+	storage     *snapshot.Store
 	diagnostics chan struct{}
 	deliveries  *delivery.Log
 	cfg         config.Config
@@ -117,7 +121,11 @@ func New(c config.Config, logger *slog.Logger) (*Gateway, error) {
 	timeout, _ := time.ParseDuration(c.OriginTimeout)
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.ResponseHeaderTimeout = timeout
-	g := &Gateway{diagnostics: make(chan struct{}, 2), cfg: c, logger: logger, started: time.Now(), transport: transport}
+	transport.MaxResponseHeaderBytes = 64 << 10
+	transport.MaxConnsPerHost = 64
+	transport.MaxIdleConnsPerHost = 8
+	transport.IdleConnTimeout = 60 * time.Second
+	g := &Gateway{admission: make(chan struct{}, c.HTTPConcurrency), diagnostics: make(chan struct{}, 2), cfg: c, logger: logger, started: time.Now(), transport: transport}
 	g.proxy = &httputil.ReverseProxy{
 		Transport: transport,
 		ErrorLog:  log.New(io.Discard, "", 0),
@@ -126,6 +134,7 @@ func New(c config.Config, logger *slog.Logger) (*Gateway, error) {
 			pr.SetXForwarded()
 			// Never allow an upstream or downstream cache to confuse bot and human responses.
 			pr.Out.Header.Del("X-RenderCache")
+			pr.Out.Header.Del("X-RenderCache-Edge-Key")
 		},
 		ModifyResponse: func(resp *http.Response) error {
 			route, _ := resp.Request.Context().Value(routeKey{}).(Route)
@@ -138,7 +147,12 @@ func New(c config.Config, logger *slog.Logger) (*Gateway, error) {
 			route, _ := r.Context().Value(routeKey{}).(Route)
 			w.Header().Set("X-RenderCache", route.Outcome)
 			w.Header().Add("Vary", "User-Agent, Cookie, Authorization, Accept")
-			http.Error(w, "origin unavailable", http.StatusBadGateway)
+			var limit *http.MaxBytesError
+			if errors.As(err, &limit) {
+				http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+			} else {
+				http.Error(w, "origin unavailable", http.StatusBadGateway)
+			}
 		},
 	}
 	return g, nil
@@ -149,6 +163,25 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w, finish := g.observe(w, r, route)
 	defer finish()
 	g.requests.Add(1)
+	if g.cfg.EdgeToken != "" && subtle.ConstantTimeCompare([]byte(r.Header.Get("X-RenderCache-Edge-Key")), []byte(g.cfg.EdgeToken)) != 1 {
+		w.Header().Set("X-RenderCache", "BYPASS")
+		http.Error(w, "forbidden", 403)
+		return
+	}
+	select {
+	case g.admission <- struct{}{}:
+		defer func() { <-g.admission }()
+	default:
+		w.Header().Set("X-RenderCache", "BYPASS")
+		http.Error(w, "server busy", 503)
+		return
+	}
+	if r.ContentLength > g.cfg.MaxRequestBytes {
+		w.Header().Set("X-RenderCache", "BYPASS")
+		http.Error(w, "request body too large", 413)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, g.cfg.MaxRequestBytes)
 	if route.Outcome == "MISS" {
 		if g.store != nil && g.snapshot(w, r, route) {
 			return
@@ -156,14 +189,24 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		g.misses.Add(1)
 	}
 	// Ignore untrusted diagnostic headers; the decision comes only from classification.
-	ctx := context.WithValue(r.Context(), routeKey{}, route)
+	timeout, _ := time.ParseDuration(g.cfg.OriginTimeout)
+	bounded, cancel := context.WithTimeout(r.Context(), timeout)
+	defer cancel()
+	ctx := context.WithValue(bounded, routeKey{}, route)
 	g.proxy.ServeHTTP(w, r.WithContext(ctx))
 }
 
 // SetWarmer must be called before starting the HTTP listeners.
 func (g *Gateway) SetWarmer(manager *warm.Manager) { g.warming = manager }
 
-func (g *Gateway) SetSnapshotStore(store *snapshot.Store) { g.store = store }
+func (g *Gateway) SetStorage(store *snapshot.Store)       { g.storage = store }
+func (g *Gateway) SetSnapshotStore(store *snapshot.Store) { g.store = store; g.storage = store }
+func (g *Gateway) storageStatus() any {
+	if g.storage == nil {
+		return nil
+	}
+	return g.storage.Status()
+}
 
 func (g *Gateway) Close() { g.transport.CloseIdleConnections(); g.closeDeliveries() }
 
@@ -181,7 +224,7 @@ func (g *Gateway) AdminHandler() http.Handler {
 		if g.warming != nil {
 			warming = g.warming.Status()
 		}
-		json.NewEncoder(w).Encode(map[string]any{"warming": warming, "bot_cache_hits": g.hits.Load(), "bot_cache_stale": g.stale.Load(), "delivery_log": g.deliveryStatus(), "stage": "session-5-diagnostics", "manual_render_available": true, "origin": g.cfg.Origin, "uptime_seconds": int(time.Since(g.started).Seconds()), "requests": g.requests.Load(), "bot_cache_misses": g.misses.Load(), "rendering_enabled": g.warming != nil, "snapshot_serving_enabled": g.store != nil})
+		json.NewEncoder(w).Encode(map[string]any{"warming": warming, "bot_cache_hits": g.hits.Load(), "bot_cache_stale": g.stale.Load(), "delivery_log": g.deliveryStatus(), "storage": g.storageStatus(), "stage": "prototype-alpha", "manual_render_available": true, "origin": g.cfg.Origin, "uptime_seconds": int(time.Since(g.started).Seconds()), "requests": g.requests.Load(), "bot_cache_misses": g.misses.Load(), "rendering_enabled": g.warming != nil, "snapshot_serving_enabled": g.store != nil})
 	})
 	mux.HandleFunc("POST /purge", g.purge)
 	mux.HandleFunc("GET /{$}", g.demo)

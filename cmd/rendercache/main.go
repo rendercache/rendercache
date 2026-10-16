@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/rendercache/rendercache/internal/localfs"
 	"io"
 	"log/slog"
 	"net"
@@ -14,6 +15,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"syscall"
 	"time"
 
@@ -27,25 +29,31 @@ import (
 	"github.com/rendercache/rendercache/internal/warm"
 )
 
+var version = "0.1.0-alpha.1"
+var commit = "unknown"
+
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if err := run(ctx, os.Args[1:], os.Stdout, os.Stderr); err != nil {
-		fmt.Fprintln(os.Stderr, "rendercache:", err)
+		reportError(os.Stderr, err)
 		os.Exit(1)
 	}
 }
 
 func run(ctx context.Context, args []string, out, errOut io.Writer) error {
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
-		fmt.Fprintln(out, "Usage: rendercache serve --origin https://app.example.com [--config rendercache.json]\nCommands: serve, render, inspect, version\nRun rendercache serve --help for options.")
+		fmt.Fprintln(out, "Usage: rendercache serve --origin https://app.example.com [--config rendercache.json]\nCommands: serve, render, inspect, prune, health, version\nRun rendercache serve --help for options.")
 		return nil
+	}
+	if args[0] == "health" {
+		return health(ctx, args[1:], errOut)
 	}
 	if args[0] == "version" {
-		fmt.Fprintln(out, "rendercache 0.1.0-dev (session 5)")
+		fmt.Fprintf(out, "rendercache %s (%s; %s/%s)\n", version, commit, runtime.GOOS, runtime.GOARCH)
 		return nil
 	}
-	if args[0] != "serve" && args[0] != "render" && args[0] != "inspect" {
+	if args[0] != "serve" && args[0] != "render" && args[0] != "inspect" && args[0] != "prune" {
 		return fmt.Errorf("unknown command %q", args[0])
 	}
 	fs := flag.NewFlagSet(args[0], flag.ContinueOnError)
@@ -56,6 +64,7 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) error {
 	admin := fs.String("admin-listen", "", "admin listen address (default 127.0.0.1:9090)")
 	publicURL := fs.String("public-url", "", "public site root, when different from origin")
 	pageURL := fs.String("url", "", "public page URL or root-relative path (render/inspect)")
+	olderThan := fs.String("older-than", "", "minimum age to prune (e.g. 720h); required for prune")
 	dataDir := fs.String("data-dir", "", "snapshot directory")
 	chromePath := fs.String("chrome-path", "", "path to Chrome/Chromium executable")
 	noSandbox := fs.Bool("chrome-no-sandbox", false, "explicitly disable Chrome sandbox (isolated environments only)")
@@ -114,11 +123,46 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) error {
 			c.AdminListen = *admin
 		}
 	})
+	if token, ok := os.LookupEnv("RENDERCACHE_EDGE_TOKEN"); ok {
+		c.EdgeToken = token
+	}
 	if token, ok := os.LookupEnv("RENDERCACHE_ADMIN_TOKEN"); ok {
 		c.AdminToken = token
 	}
 	if err := c.Validate(); err != nil {
 		return err
+	}
+	if *olderThan != "" && args[0] != "prune" {
+		return errors.New("--older-than is only used by prune")
+	}
+	if args[0] != "inspect" {
+		unlock, err := localfs.Lock(c.DataDir)
+		if err != nil {
+			return err
+		}
+		defer unlock()
+	}
+	if args[0] == "prune" {
+		if *pageURL != "" {
+			return errors.New("prune does not accept --url")
+		}
+		age, err := time.ParseDuration(*olderThan)
+		if err != nil || age < time.Minute {
+			return errors.New("prune requires --older-than of at least 1m")
+		}
+		store, err := snapshot.OpenWithLimits(c.DataDir, c.MaxHTMLBytes, snapshot.Limits{MaxBytes: c.SnapshotMaxBytes, MaxFiles: c.SnapshotMaxFiles})
+		if err != nil {
+			return err
+		}
+		defer store.Close()
+		if _, err := store.CleanupTemps(); err != nil {
+			return err
+		}
+		removed, err := store.Prune(time.Now().Add(-age))
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(out).Encode(map[string]any{"removed": removed, "storage": store.Status()})
 	}
 	if args[0] != "serve" {
 		if *pageURL == "" {
@@ -128,16 +172,20 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) error {
 		if err != nil {
 			return err
 		}
-		store, err := snapshot.Open(c.DataDir, c.MaxHTMLBytes)
+		store, err := snapshot.OpenWithLimits(c.DataDir, c.MaxHTMLBytes, snapshot.Limits{MaxBytes: c.SnapshotMaxBytes, MaxFiles: c.SnapshotMaxFiles})
 		if err != nil {
 			return err
 		}
+		defer store.Close()
 		if args[0] == "inspect" {
 			record, err := store.Load(p)
 			if err != nil {
 				return err
 			}
 			return json.NewEncoder(out).Encode(record)
+		}
+		if _, err := store.CleanupTemps(); err != nil {
+			return err
 		}
 		engine, err := newRenderer(c)
 		if err != nil {
@@ -182,10 +230,17 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) error {
 
 	var store *snapshot.Store
 	if c.SnapshotEnabled || c.WarmEnabled {
-		store, err = snapshot.Open(c.DataDir, c.MaxHTMLBytes)
+		store, err = snapshot.OpenWithLimits(c.DataDir, c.MaxHTMLBytes, snapshot.Limits{MaxBytes: c.SnapshotMaxBytes, MaxFiles: c.SnapshotMaxFiles})
 		if err != nil {
 			return err
 		}
+	}
+	if store != nil {
+		defer store.Close()
+		if _, err := store.CleanupTemps(); err != nil {
+			return err
+		}
+		g.SetStorage(store)
 	}
 	if c.SnapshotEnabled {
 		g.SetSnapshotStore(store)
@@ -212,8 +267,8 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) error {
 		defer manager.Close()
 	}
 	upstreamTimeout, _ := time.ParseDuration(c.OriginTimeout)
-	publicServer := &http.Server{Handler: g, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second, WriteTimeout: upstreamTimeout + 5*time.Second, MaxHeaderBytes: 1 << 20}
-	adminServer := &http.Server{Handler: g.AdminHandler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, IdleTimeout: 30 * time.Second}
+	publicServer := &http.Server{Handler: g, BaseContext: func(net.Listener) context.Context { return workCtx }, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: upstreamTimeout, IdleTimeout: 60 * time.Second, WriteTimeout: upstreamTimeout + 5*time.Second, MaxHeaderBytes: 64 << 10}
+	adminServer := &http.Server{Handler: g.AdminHandler(), BaseContext: func(net.Listener) context.Context { return workCtx }, MaxHeaderBytes: 16 << 10, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, IdleTimeout: 30 * time.Second}
 	errCh := make(chan error, 2)
 	for _, entry := range []struct {
 		s *http.Server
@@ -280,5 +335,16 @@ func boundedInfo(logger *slog.Logger, message string, args ...any) error {
 		return nil
 	case <-timer.C:
 		return errors.New("lifecycle log write timed out")
+	}
+}
+
+func reportError(w io.Writer, err error) {
+	done := make(chan struct{})
+	go func() { fmt.Fprintln(w, "rendercache:", err); close(done) }()
+	timer := time.NewTimer(100 * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case <-done:
+	case <-timer.C:
 	}
 }

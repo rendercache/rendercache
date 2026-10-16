@@ -14,6 +14,7 @@ async function refresh() {
  $('metrics').replaceChildren();
  for (const [label,value] of [['Sitemap cached',`${w.cached}/${w.discovered}`],['Queued',w.queued],['Rendering',w.rendering],['Request pages',w.extra_pages]]) {const card=document.createElement('div');const strong=document.createElement('strong');strong.textContent=value??0;const span=document.createElement('span');span.textContent=label;card.append(strong,span);$('metrics').append(card);}
  $('health').textContent=JSON.stringify(w,null,2);
+ $('storage').textContent=s.storage?`Snapshot storage: ${s.storage.files}/${s.storage.max_files} files · ${s.storage.bytes}/${s.storage.max_bytes} bytes · ${s.storage.rejected_writes} rejected writes${s.storage.over_limit?' · OVER QUOTA':''}`:'Snapshot storage disabled';
  $('log-status').textContent=`Logging ${l.enabled?'enabled':'disabled'} · accepted ${l.accepted} · written ${l.written} · dropped ${l.dropped} · failures ${l.failures}${l.error?' · '+l.error:''}. Recent receipts are in memory; written counts track file writes, not fsync durability.`;
  $('logs').replaceChildren();
  for (const e of [...l.recent].reverse()) {const row=document.createElement('tr');cell(row,`${e.time} · ${e.crawler_claim}${e.simulated?' · SIMULATED':''}`);cell(row,`${e.method} ${e.path}`);cell(row,`${e.status} ${e.cache} · age ${e.snapshot_age_seconds}s · ${e.duration_ms}ms`);cell(row,e.delivered_bytes);cell(row,e.full_snapshot_html?'Yes':e.cached_response?'No · cached response':'No');$('logs').append(row);}

@@ -1,0 +1,13 @@
+{
+  "origin": "http://origin:8081",
+  "public_url": "https://app.example.com",
+  "listen": ":8080",
+  "admin_listen": "127.0.0.1:9090",
+  "data_dir": "/data/snapshots",
+  "chrome_path": "/usr/bin/chromium",
+  "chrome_no_sandbox": false,
+  "snapshot_max_bytes": 1073741824,
+  "snapshot_max_files": 10000,
+  "http_concurrency": 32,
+  "ready_selector": "main[data-ready]"
+}

@@ -1,0 +1,10 @@
+name = "rendercache-routing"
+main = "worker.mjs"
+compatibility_date = "2026-10-16"
+workers_dev = false
+# Use a Route in front of the existing application, not a Custom Domain origin.
+# routes = [{ pattern = "app.example.com/*", zone_name = "example.com" }]
+[vars]
+PUBLIC_HOST = "app.example.com"
+CACHE_ORIGIN = "https://rendercache-backend.example.net"
+# Set RENDERCACHE_EDGE_TOKEN with `wrangler secret put RENDERCACHE_EDGE_TOKEN`.

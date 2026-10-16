@@ -7,8 +7,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/rendercache/rendercache/internal/localfs"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -47,6 +47,7 @@ type Log struct {
 	queue   chan Event
 	done    chan struct{}
 	closed  bool
+	root    *os.Root
 	dir     string
 	limit   int64
 	backups int
@@ -59,11 +60,23 @@ func Open(dir string, limit int64, backups int) (*Log, error) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, err
 	}
-	f, err := os.OpenFile(filepath.Join(dir, "crawler.jsonl"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	info, err := os.Lstat(dir)
 	if err != nil {
 		return nil, err
 	}
-	l := &Log{queue: make(chan Event, 256), done: make(chan struct{}), dir: dir, limit: limit, backups: backups, state: Status{Enabled: true}}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return nil, errors.New("delivery directory must not be a symlink")
+	}
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return nil, err
+	}
+	f, err := localfs.OpenRegular(root, "crawler.jsonl", os.O_CREATE|os.O_APPEND|os.O_WRONLY)
+	if err != nil {
+		root.Close()
+		return nil, err
+	}
+	l := &Log{root: root, queue: make(chan Event, 256), done: make(chan struct{}), dir: dir, limit: limit, backups: backups, state: Status{Enabled: true}}
 	go l.run(f)
 	return l, nil
 }
@@ -128,6 +141,7 @@ func (l *Log) failure(operation string) {
 }
 func (l *Log) run(f *os.File) {
 	defer close(l.done)
+	defer l.root.Close()
 	defer func() {
 		if f != nil {
 			if err := f.Close(); err != nil {
@@ -140,7 +154,7 @@ func (l *Log) run(f *os.File) {
 		b = append(b, '\n')
 		if f == nil {
 			var err error
-			f, err = os.OpenFile(filepath.Join(l.dir, "crawler.jsonl"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+			f, err = localfs.OpenRegular(l.root, "crawler.jsonl", os.O_CREATE|os.O_APPEND|os.O_WRONLY)
 			if err != nil {
 				l.failure("open failed")
 				continue
@@ -161,7 +175,7 @@ func (l *Log) run(f *os.File) {
 				l.failure("rotation failed")
 				continue
 			}
-			f, err = os.OpenFile(filepath.Join(l.dir, "crawler.jsonl"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+			f, err = localfs.OpenRegular(l.root, "crawler.jsonl", os.O_CREATE|os.O_APPEND|os.O_WRONLY)
 			if err != nil {
 				l.failure("open after rotation failed")
 				continue
@@ -179,14 +193,30 @@ func (l *Log) run(f *os.File) {
 	}
 }
 func (l *Log) rotate() error {
-	base := filepath.Join(l.dir, "crawler.jsonl")
-	if err := os.Remove(base + "." + strconv.Itoa(l.backups)); err != nil && !os.IsNotExist(err) {
+	for i := 0; i <= l.backups; i++ {
+		name := "crawler.jsonl"
+		if i > 0 {
+			name += "." + strconv.Itoa(i)
+		}
+		info, err := l.root.Lstat(name)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() {
+			return errors.New("non-regular log file")
+		}
+	}
+	base := "crawler.jsonl"
+	if err := l.root.Remove(base + "." + strconv.Itoa(l.backups)); err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	for i := l.backups - 1; i >= 1; i-- {
-		if err := os.Rename(base+"."+strconv.Itoa(i), base+"."+strconv.Itoa(i+1)); err != nil && !os.IsNotExist(err) {
+		if err := l.root.Rename(base+"."+strconv.Itoa(i), base+"."+strconv.Itoa(i+1)); err != nil && !os.IsNotExist(err) {
 			return err
 		}
 	}
-	return os.Rename(base, base+".1")
+	return l.root.Rename(base, base+".1")
 }

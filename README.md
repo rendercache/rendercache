@@ -2,7 +2,7 @@
 
 A self-hosted pre-render cache for JavaScript sites, designed to prepare HTML before bots and AI crawlers arrive.
 
-**Prototype in progress — session 5 of 6.** The service warms JavaScript pages from sitemaps, stores rendered responses and serves them to recognized bots. Humans receive the ordinary app. Fresh snapshots return `HIT`; expired snapshots return `STALE` while a deduplicated refresh runs in the background. A cold `MISS` proxies the origin immediately and requests background rendering. The protected admin page compares raw HTML with a saved snapshot, highlights missing text and shows rotating crawler delivery records. Release packaging and storage quotas are still upcoming.
+**Alpha prototype — 0.1.0-alpha.1, Linux amd64.** RenderCache warms JavaScript pages from sitemaps, stores rendered responses and serves them to recognized crawler claims. Humans receive the ordinary app. Fresh snapshots return `HIT`; expired snapshots return `STALE` while a deduplicated refresh runs in the background. A cold `MISS` proxies the origin immediately and requests background rendering. The protected admin page compares raw HTML with a saved snapshot, highlights missing text and shows rotating delivery receipts. Snapshot quotas, explicit prune, process locking, constrained HTTP work and Docker/deployment/release packaging are included. This is an evaluation alpha, not a production-readiness claim.
 
 ## Run the current checkpoint
 
@@ -50,7 +50,7 @@ curl http://127.0.0.1:9090/status
 
 URL sets, nested sitemap indexes, gzip files and HTTP gzip encoding are supported. A single successful discovery defines the current page set; duplicate pages/documents and index cycles are deduplicated. Every page and nested sitemap must belong to `public_url`, and every fetch goes to the configured origin. Redirects must stay on that origin and are limited to five hops. Foreign/invalid locations, malformed XML, unsupported roots/namespaces, XML directives, multiple/missing loc fields or exceeded limits reject the whole scan. A failed scan preserves the last successful page set rather than claiming partial coverage. Nested sitemap documents and page loc fields must be absolute URLs; configured root sitemaps may be root-relative paths. Locations are limited to 8192 bytes. Compressed wire bytes and decompressed XML each have the per-document byte limit.
 
-Startup reads and verifies existing snapshots. Recent records are reused without starting Chrome; missing/corrupt/expired ones are scheduled. Missing pages get priority. Only the configured workers can render, each page has at most one queued/active job, and pages beyond queue capacity remain eligible for later dispatch instead of being dropped. Successful saves determine the next refresh time. Render/store failures retain the prior good snapshot and retry with capped exponential backoff. Discovery failures also back off, capped by the normal discovery interval. There is one discovery scan at a time and separate per-fetch and whole-scan deadlines. Scheduling has up to one second of tick granularity when idle; worker completions wake it immediately.
+Writable commands acquire an exclusive data-directory lock and remove recognized abandoned temporary records. Inspect remains read-only and can run alongside serve. Startup counts all recognized regular records for quota accounting, including corrupt files. Quota excess does not delete good copies: reads remain available, writes are rejected unless they shrink/non-grow an existing over-quota set, and explicit `prune --older-than` reclaims old records after stopping the service. See [deployment maintenance](docs/deployment.md). Startup reads and verifies existing snapshots. Recent records are reused without starting Chrome; missing/corrupt/expired ones are scheduled. Missing pages get priority. Only the configured workers can render, each page has at most one queued/active job, and pages beyond queue capacity remain eligible for later dispatch instead of being dropped. Successful saves determine the next refresh time. Render/store failures retain the prior good snapshot and retry with capped exponential backoff. Discovery failures also back off, capped by the normal discovery interval. There is one discovery scan at a time and separate per-fetch and whole-scan deadlines. Scheduling has up to one second of tick granularity when idle; worker completions wake it immediately.
 
 `/status` includes `warming`: ready/warming/discovering/degraded state, discovered/cached/missing/fresh/stale counts, queued and active work, successes/failures, discovery errors/times and up to 100 sorted page records. `pages_omitted` counts the rest; individual errors are capped at 1024 bytes. Cached counts reflect the last successful load/save and eligible bot reads; missing/corrupt reads mark a tracked page missing. This is not a full disk audit on each status request. `ready` means the current discovered set has recent snapshots; an empty valid sitemap has zero discovered pages and can be ready. `/healthz` remains process health, separate from warming success.
 
@@ -110,13 +110,18 @@ The endpoint accepts exactly one public URL (or root-relative path) and returns 
 
 ## Configuration
 
-`--config` loads a strict JSON object; unknown fields and files larger than 1 MiB are rejected. CLI flags `--origin`, `--public-url`, `--listen`, `--admin-listen`, `--data-dir`, `--chrome-path`, `--chrome-no-sandbox`, `--ready-selector`, `--render-timeout`, `--warm`, `--sitemap`, `--warm-interval`, `--sitemap-interval`, `--snapshots` and `--snapshot-ttl` override the corresponding file values. The `RENDERCACHE_ADMIN_TOKEN` environment variable overrides `admin_token`, including when explicitly empty. Configuration and bot lists load at startup; restart to apply changes. Supplying `bots` replaces the default list, and an empty array disables classification. `--sitemap` replaces `sitemap_urls` with one entry; JSON supports several root sitemaps.
+`--config` loads a strict JSON object; unknown fields and files larger than 1 MiB are rejected. CLI flags `--origin`, `--public-url`, `--listen`, `--admin-listen`, `--data-dir`, `--chrome-path`, `--chrome-no-sandbox`, `--ready-selector`, `--render-timeout`, `--warm`, `--sitemap`, `--warm-interval`, `--sitemap-interval`, `--snapshots` and `--snapshot-ttl` override the corresponding file values. The `RENDERCACHE_ADMIN_TOKEN` and `RENDERCACHE_EDGE_TOKEN` environment variables override their respective JSON secrets, including when explicitly empty. Tokens cannot contain newlines or exceed 1024 bytes. Configuration and bot lists load at startup; restart to apply changes. At most 256 crawler patterns (1..128 bytes each), 64 extra render origins, 128 root sitemaps and a 4096-byte ready selector are accepted. Supplying `bots` replaces the default list, and an empty array disables classification. `--sitemap` replaces `sitemap_urls` with one entry; JSON supports several root sitemaps.
 
 | Setting | Default | Purpose |
 | --- | --- | --- |
 | `origin` | required | Fixed upstream site root |
 | `public_url` | origin | Public root used for URL validation and snapshot identity |
-| `data_dir` | `data/snapshots` | Local snapshot and delivery-log directory |
+| `data_dir` | `data/snapshots` | Local snapshot and delivery-log directory, one writer process |
+| `snapshot_max_bytes` | `1073741824` | Serialized-record quota; 4096 bytes to 1 TiB |
+| `snapshot_max_files` | `10000` | Record count quota; 1 to 100000 |
+| `max_request_bytes` | `16777216` | Public request-body limit; 1 byte to 256 MiB |
+| `http_concurrency` | `32` | Concurrent public requests; excess requests return 503 |
+| `edge_token` | empty | Optional public-listener edge key; prefer environment |
 | `delivery_log_max_bytes` | `10485760` | Maximum bytes per log file; 4096 to 1 GiB |
 | `delivery_log_backups` | `3` | Rotated files retained in addition to current file; 1 to 10 |
 | `chrome_path` | auto-detect | Local browser executable |
@@ -154,7 +159,7 @@ Every admin route requires `Authorization: Bearer <token>` or HTTP Basic authent
 
 Only GET/HEAD document requests without cookies or authorization are eligible for the snapshot path. API paths, non-HTML file extensions, non-HTML Accept headers, range/upgrade requests and `Cache-Control: no-store` bypass it. A user-agent match is a crawler claim, not an authenticated identity. Every upstream response varies on User-Agent, Cookie and Authorization; upstream cookies, status codes and content are preserved. Incoming forwarding claims are removed before fresh forwarding headers are generated. Keep TLS and any trusted edge routing in front of this HTTP service.
 
-Crawler delivery receipts are written as rotating JSON lines under `data_dir/delivery/crawler.jsonl`; see the diagnostics section below. Stderr carries only the two process lifecycle messages. Sitemap warming is proactive; eligible misses/stale requests can also request bounded background work. Manual `render` always performs new browser work. Bots' query strings are forwarded unchanged, but query strings are omitted from diagnostic logs.
+Crawler delivery receipts are written as rotating JSON lines under `data_dir/delivery/crawler.jsonl`; see the diagnostics section below. Stderr carries process lifecycle/error messages with bounded waits. The proxy has a total `origin_timeout` deadline (including streaming and upgrades), bounded origin connections/headers, public request body limits and a concurrency gate. Oversized known bodies return 413; streamed overflow can abort a request or return a gateway error depending on when detected. Slow uploads are subject to server read deadlines. Use cgroup/container limits for browser RSS, processes and temporary disk. See deployment guide before enabling external routing. Sitemap warming is proactive; eligible misses/stale requests can also request bounded background work. Manual `render` always performs new browser work. Bots' query strings are forwarded unchanged, but query strings are omitted from diagnostic logs.
 
 ## What the bot sees
 
@@ -174,13 +179,13 @@ Each recognized crawler claim is recorded after response handling, including pri
 
 `cached_response` includes saved HTML, redirects and removals. `full_snapshot_html` requires a complete successful GET of a nonempty 200 snapshot with no write failure. HEAD, 304, redirects, removals, misses and partial writes are false. These are server-side write receipts, not proof that a remote client read the body. Protocol upgrades are labeled `protocol_upgrade`; tunneled traffic is outside HTTP body accounting. A user-agent match is a claim, not verified identity; receipts do not prove indexing or AI citation.
 
-Logging uses a 256-event nonblocking queue and one file writer, a 100-event in-memory recent list, 512-byte paths and 128-byte crawler patterns. Defaults retain the current 10 MiB file plus three rotated backups (about 40 MiB maximum). A full queue drops receipts and increments `dropped`; write/open/rotation failures increment `failures` and expose a bounded operation name. These counters and recent receipts appear in `/status` under `delivery_log`. `accepted` means queued; `written` means a successful file write, not fsync durability. Counts/recent receipts reset on restart; files survive. One process must own each data directory. Incomplete final JSON lines can occur after a crash or failed write; readers should skip them.
+Logging uses a 256-event nonblocking queue and one file writer, a 100-event in-memory recent list, 512-byte paths and 128-byte crawler patterns. Defaults retain the current 10 MiB file plus three rotated backups (about 40 MiB maximum). A full queue drops receipts and increments `dropped`; write/open/rotation failures increment `failures` and expose a bounded operation name. These counters and recent receipts appear in `/status` under `delivery_log`. `accepted` means queued; `written` means a successful file write, not fsync durability. Counts/recent receipts reset on restart; files survive. One process must own each data directory; serve/render/prune enforce an advisory lock. Incomplete final JSON lines can occur after a crash or failed write; readers should skip them.
 
-Startup fails if the log cannot be opened. Runtime logging failures do not stall responses or grow files beyond the configured rotation limit. Shutdown closes admission and drains with a two-second deadline; an unresponsive filesystem can leave the writer pending until process exit. Stderr lifecycle writes each have a 100 ms wait limit and report write failures/timeouts as a CLI error. Per-request upstream error text is omitted. Snapshots have independent durability guarantees; these delivery logs are best-effort operational records.
+Startup fails if the log cannot be opened. Runtime logging failures do not stall responses or grow files beyond the configured rotation limit. Shutdown closes admission and drains with a two-second deadline; an unresponsive filesystem can leave the writer pending until process exit. Stderr lifecycle writes each have a 100 ms wait limit and report write failures/timeouts as a CLI error; final error output also has a bounded wait. Per-request upstream error text is omitted. Snapshots have independent durability guarantees; these delivery logs are best-effort operational records.
 
-## Roadmap
+## Prototype checkpoint
 
-Session 2 complete: Chromium renderer, readiness/timeout controls, atomic disk snapshots, checksums and restart persistence. Chrome/Chromium is an external dependency; the later container will bundle it.
+Session 2 complete: Chromium renderer, readiness/timeout controls, atomic disk snapshots, checksums and restart persistence. Chrome/Chromium is an external dependency for standalone binaries; the supplied Dockerfile installs it.
 
 Session 3 complete: bounded sitemap/index/gzip discovery, scheduled warming, deduplicated bounded jobs, retry backoff and coverage status.
 
@@ -188,9 +193,15 @@ Session 4 complete: fresh/stale/cold serving, bounded refresh admission, HTTP va
 
 Session 5 complete: raw-versus-rendered shell detection, rotating crawler delivery receipts, bounded request-page error details and one protected status/demo page.
 
-Session 6: complete integration checks, Docker packaging, deployment guides and initial release artifacts.
+Session 6: quota/cleanup and file confinement, process locking, total HTTP deadlines/admission/body limits, a non-root Chromium image, nginx/Cloudflare examples, and gated deterministic Linux amd64 prerelease artifacts. See [deployment and release verification](docs/deployment.md) for controls, verification boundaries and operational limits.
 
 Lightpanda, BareProxy integration, hosted billing and framework-specific plugins are deferred. Project website: https://RenderCache.com (domain connection pending).
+
+## Builds and deployment
+
+The supported alpha artifact is Linux amd64; Chrome remains separately installed for the standalone binary. CI tests the extracted executable and compares two deterministic archive builds before a `Release v...` main-branch commit can publish a prerelease with SHA256SUMS. Ordinary commits upload verified artifacts without publishing. Source builds need Go 1.26 or later; the release toolchain is pinned to Go 1.27.2. Other operating systems are currently unsupported because secure file and lock operations are Linux-specific.
+
+The Docker image runs as UID 10001 with Chromium and tini. Its sandbox is enabled by default and requires host support. The isolated CI container smoke explicitly opts out of Chrome's sandbox under a private network and filesystem/resource restrictions; it does not verify sandbox operation on your host. Docker, nginx, Cloudflare routing and quota maintenance instructions are in [docs/deployment.md](docs/deployment.md). No domain, Worker or registry image is deployed automatically.
 
 ## Development
 

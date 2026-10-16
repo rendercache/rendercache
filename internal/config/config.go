@@ -17,6 +17,11 @@ import (
 
 // Config is the on-disk JSON configuration. CLI flags override these values.
 type Config struct {
+	EdgeToken           string   `json:"edge_token,omitempty"`
+	SnapshotMaxBytes    int64    `json:"snapshot_max_bytes"`
+	SnapshotMaxFiles    int      `json:"snapshot_max_files"`
+	MaxRequestBytes     int64    `json:"max_request_bytes"`
+	HTTPConcurrency     int      `json:"http_concurrency"`
 	DeliveryLogMaxBytes int64    `json:"delivery_log_max_bytes"`
 	DeliveryLogBackups  int      `json:"delivery_log_backups"`
 	Origin              string   `json:"origin"`
@@ -55,7 +60,7 @@ type Config struct {
 }
 
 func Default() Config {
-	return Config{
+	return Config{SnapshotMaxBytes: 1 << 30, SnapshotMaxFiles: 10000, MaxRequestBytes: 16 << 20, HTTPConcurrency: 32,
 		DeliveryLogMaxBytes: 10 << 20, DeliveryLogBackups: 3, SnapshotEnabled: true, SnapshotTTL: "24h", RequestPageLimit: 256, Origin: "", PublicURL: "", Listen: ":8080", AdminListen: "127.0.0.1:9090",
 		OriginTimeout: "30s", ShutdownTimeout: "10s",
 		DataDir: "data/snapshots", RenderTimeout: "30s", RenderSettle: "500ms", MaxHTMLBytes: 8 << 20, RenderConcurrency: 1,
@@ -133,6 +138,20 @@ func (c Config) SiteURL() string {
 }
 
 func (c Config) Validate() error {
+	if len(c.Bots) > 256 || len(c.RenderAllowOrigins) > 64 || len(c.ReadySelector) > 4096 || len(c.SitemapURLs) > 128 {
+		return errors.New("configured rule list or selector exceeds limit")
+	}
+	for _, token := range []string{c.AdminToken, c.EdgeToken} {
+		if len(token) > 1024 || strings.ContainsAny(token, "\r\n") {
+			return errors.New("tokens must not contain newlines or exceed 1024 bytes")
+		}
+	}
+	if c.SnapshotMaxBytes < 4096 || c.SnapshotMaxBytes > 1<<40 || c.SnapshotMaxFiles < 1 || c.SnapshotMaxFiles > 100000 {
+		return errors.New("invalid snapshot quota (4096..1TiB bytes, 1..100000 files)")
+	}
+	if c.MaxRequestBytes < 1 || c.MaxRequestBytes > 256<<20 || c.HTTPConcurrency < 1 || c.HTTPConcurrency > 4096 {
+		return errors.New("invalid HTTP limits")
+	}
 	if c.DeliveryLogMaxBytes < 4096 || c.DeliveryLogMaxBytes > 1<<30 || c.DeliveryLogBackups < 1 || c.DeliveryLogBackups > 10 {
 		return errors.New("invalid delivery log limits (4096..1GiB bytes, 1..10 backups)")
 	}
@@ -207,8 +226,8 @@ func (c Config) Validate() error {
 		}
 	}
 	for _, bot := range c.Bots {
-		if strings.TrimSpace(bot) == "" {
-			return errors.New("bot patterns cannot be empty")
+		if strings.TrimSpace(bot) == "" || len(bot) > 128 {
+			return errors.New("bot patterns must contain 1..128 bytes")
 		}
 	}
 	return nil

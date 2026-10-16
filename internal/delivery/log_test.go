@@ -95,3 +95,20 @@ func TestRotationFailureVisibleAndBounded(t *testing.T) {
 		t.Fatal(info.Size())
 	}
 }
+
+func TestRefuseLogSymlink(t *testing.T) {
+	dir := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "private")
+	os.WriteFile(outside, []byte("unchanged"), 0600)
+	if err := os.Symlink(outside, filepath.Join(dir, "crawler.jsonl")); err != nil {
+		t.Fatal(err)
+	}
+	if l, err := Open(dir, 4096, 1); err == nil {
+		l.Close(context.Background())
+		t.Fatal("log symlink accepted")
+	}
+	data, _ := os.ReadFile(outside)
+	if string(data) != "unchanged" {
+		t.Fatal("outside file modified")
+	}
+}

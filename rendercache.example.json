@@ -47,5 +47,9 @@
   "snapshot_ttl": "24h",
   "request_page_limit": 256,
   "delivery_log_max_bytes": 10485760,
-  "delivery_log_backups": 3
+  "delivery_log_backups": 3,
+  "snapshot_max_bytes": 1073741824,
+  "snapshot_max_files": 10000,
+  "max_request_bytes": 16777216,
+  "http_concurrency": 32
 }

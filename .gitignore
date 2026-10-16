@@ -2,3 +2,6 @@
 /data/
 /rendercache
 *.log
+/dist/
+/dist-repeat/
+/binary-smoke/
