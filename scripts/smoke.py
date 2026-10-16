@@ -41,8 +41,12 @@ def request(address, method='GET', body=None, headers=None):
         return response.status, response.headers, response.read()
 
 
+observed_paths = []
+
+
 class Origin(BaseHTTPRequestHandler):
     def do_GET(self):
+        observed_paths.append(self.path)
         assert not self.headers.get('X-RenderCache-Edge-Key'), 'edge secret reached origin'
         self.send_response(200)
         self.send_header('Content-Type', 'text/html')
@@ -122,6 +126,9 @@ with tempfile.TemporaryDirectory() as tmp:
             assert code == 200 and headers.get('X-RenderCache') == 'BYPASS' and b'<script>' in body
             code, _, body = request(admin_url+'/diagnose', method='POST', body={'url': '/'}, headers={**auth, 'Content-Type': 'application/json'})
             assert code == 200 and json.loads(body)['comparison']['likely_shell']
+        code, headers, body = request(public_url+'/a%2Fb?q=1&q=2', headers={'User-Agent': 'GPTBot'})
+        assert code == 200 and headers.get('X-RenderCache') == 'MISS'
+        assert observed_paths[-1] == '/a%2Fb?q=1&q=2', observed_paths
         process.send_signal(signal.SIGTERM)
         assert process.wait(timeout=10) == 0, (folder/'stderr').read_text()
         if args.chrome:

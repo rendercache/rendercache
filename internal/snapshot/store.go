@@ -115,6 +115,9 @@ func (s *Store) scan() error {
 				continue
 			}
 			info, err := s.root.Lstat(e.Name())
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
 			if err != nil {
 				return err
 			}

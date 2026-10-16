@@ -200,6 +200,7 @@ func (g *Gateway) simulate(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	request, _ := http.NewRequestWithContext(ctx, "GET", p.URL, nil)
 	request.Header.Set("User-Agent", g.cfg.Bots[0])
+	request.Header.Set("X-RenderCache-Edge-Key", g.cfg.EdgeToken)
 	request.Header.Set("Accept", "text/html")
 	sink := &discardResponse{header: make(http.Header)}
 	// ReverseProxy may abort a streamed response with ErrAbortHandler. Preserve

@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"github.com/rendercache/rendercache/internal/config"
+	"github.com/rendercache/rendercache/internal/render"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -89,5 +90,21 @@ func TestEdgeKeyIsRequiredAndNeverForwarded(t *testing.T) {
 	g.ServeHTTP(w, r)
 	if w.Code != 200 || leaked.Load() {
 		t.Fatal(w.Code, leaked.Load())
+	}
+}
+
+func TestAdminSimulationWorksWithEdgeProtection(t *testing.T) {
+	g, l := demoGateway(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Error("snapshot simulation unexpectedly reached origin") }))
+	g.cfg.EdgeToken = "edge-secret"
+	if _, err := g.store.Save(mapped(g, "/"), render.Result{Status: 200, HTML: "public snapshot"}); err != nil {
+		t.Fatal(err)
+	}
+	w := adminJSON(g, "/simulate", `{"url":"/"}`)
+	if w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	events := l.Status().Recent
+	if len(events) != 1 || events[0].Status != 200 || !events[0].Simulated || !events[0].FullHTML {
+		t.Fatal(events)
 	}
 }

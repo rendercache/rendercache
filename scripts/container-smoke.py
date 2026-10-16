@@ -31,19 +31,23 @@ with tempfile.TemporaryDirectory() as tmp:
                '--read-only', '--tmpfs', '/tmp:rw,nosuid,nodev,size=536870912,mode=1777',
                '--cap-drop=ALL', '--security-opt=no-new-privileges', '--memory=1g', '--cpus=1', '--pids-limit=256',
                '-v', volume+':/data', '-e', 'RENDERCACHE_ADMIN_TOKEN=container-token',
-               'rendercache:test', 'serve', '--origin', 'http://origin', '--public-url', 'https://app.example.com',
+               'rendercache:test', 'serve', '--config', '/etc/rendercache.json', '--origin', 'http://origin', '--public-url', 'https://app.example.com',
                '--ready-selector', '#ready', '--chrome-no-sandbox')
+        last_error = ""
         for _ in range(90):
             try:
                 result = docker('exec', containers[0], 'rendercache', 'inspect', '--config', '/etc/rendercache.json', '--origin', 'http://origin', '--url', '/')
                 record = json.loads(result)
                 if 'Container rendered content' in record['result']['html']:
                     break
-            except (subprocess.CalledProcessError, json.JSONDecodeError):
-                pass
+            except subprocess.CalledProcessError as error:
+                last_error = error.stderr
+            except json.JSONDecodeError as error:
+                last_error = str(error)
             time.sleep(1)
         else:
-            raise AssertionError(docker('logs', containers[0]))
+            logs = subprocess.run(['docker', 'logs', containers[0]], text=True, capture_output=True)
+            raise AssertionError(last_error+'\n'+logs.stdout+'\n'+logs.stderr)
         assert docker('exec', containers[0], 'id', '-u') == '10001'
         docker('exec', containers[0], 'rendercache', 'health')
         docker('stop', '-t', '20', containers[0])
