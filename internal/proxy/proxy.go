@@ -153,7 +153,7 @@ func (g *Gateway) AdminHandler() http.Handler {
 	mux.HandleFunc("GET /status", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
-		json.NewEncoder(w).Encode(map[string]any{"stage": "session-1-routing", "origin": g.cfg.Origin, "uptime_seconds": int(time.Since(g.started).Seconds()), "requests": g.requests.Load(), "bot_cache_misses": g.misses.Load(), "rendering_enabled": false, "snapshot_serving_enabled": false})
+		json.NewEncoder(w).Encode(map[string]any{"stage": "session-2-manual-render", "manual_render_available": true, "origin": g.cfg.Origin, "uptime_seconds": int(time.Since(g.started).Seconds()), "requests": g.requests.Load(), "bot_cache_misses": g.misses.Load(), "rendering_enabled": false, "snapshot_serving_enabled": false})
 	})
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if g.cfg.AdminToken != "" && subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte("Bearer "+g.cfg.AdminToken)) != 1 {

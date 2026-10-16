@@ -4,5 +4,28 @@
   "admin_listen": "127.0.0.1:9090",
   "origin_timeout": "30s",
   "shutdown_timeout": "10s",
-  "bots": ["Googlebot", "bingbot", "OAI-SearchBot", "GPTBot", "ChatGPT-User", "ClaudeBot", "Claude-SearchBot", "Claude-User", "PerplexityBot", "Perplexity-User", "facebookexternalhit", "Twitterbot", "LinkedInBot"]
+  "bots": [
+    "Googlebot",
+    "bingbot",
+    "OAI-SearchBot",
+    "GPTBot",
+    "ChatGPT-User",
+    "ClaudeBot",
+    "Claude-SearchBot",
+    "Claude-User",
+    "PerplexityBot",
+    "Perplexity-User",
+    "facebookexternalhit",
+    "Twitterbot",
+    "LinkedInBot"
+  ],
+  "public_url": "https://public.example",
+  "data_dir": "data/snapshots",
+  "render_timeout": "30s",
+  "render_settle": "500ms",
+  "ready_selector": "main[data-ready]",
+  "max_html_bytes": 8388608,
+  "render_concurrency": 1,
+  "render_allow_origins": [],
+  "chrome_no_sandbox": false
 }

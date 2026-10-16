@@ -11,21 +11,33 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/rendercache/rendercache/internal/target"
 )
 
 // Config is the on-disk JSON configuration. CLI flags override these values.
 type Config struct {
-	Origin          string   `json:"origin"`
-	Listen          string   `json:"listen"`
-	AdminListen     string   `json:"admin_listen"`
-	AdminToken      string   `json:"admin_token,omitempty"`
-	Bots            []string `json:"bots"`
-	OriginTimeout   string   `json:"origin_timeout"`
-	ShutdownTimeout string   `json:"shutdown_timeout"`
+	Origin             string   `json:"origin"`
+	PublicURL          string   `json:"public_url"`
+	DataDir            string   `json:"data_dir"`
+	ChromePath         string   `json:"chrome_path"`
+	ChromeNoSandbox    bool     `json:"chrome_no_sandbox"`
+	RenderTimeout      string   `json:"render_timeout"`
+	RenderSettle       string   `json:"render_settle"`
+	ReadySelector      string   `json:"ready_selector"`
+	MaxHTMLBytes       int64    `json:"max_html_bytes"`
+	RenderConcurrency  int      `json:"render_concurrency"`
+	RenderAllowOrigins []string `json:"render_allow_origins"`
+	Listen             string   `json:"listen"`
+	AdminListen        string   `json:"admin_listen"`
+	AdminToken         string   `json:"admin_token,omitempty"`
+	Bots               []string `json:"bots"`
+	OriginTimeout      string   `json:"origin_timeout"`
+	ShutdownTimeout    string   `json:"shutdown_timeout"`
 }
 
 func Default() Config {
-	return Config{Listen: ":8080", AdminListen: "127.0.0.1:9090", OriginTimeout: "30s", ShutdownTimeout: "10s", Bots: []string{
+	return Config{DataDir: "data/snapshots", RenderTimeout: "30s", RenderSettle: "500ms", MaxHTMLBytes: 8 << 20, RenderConcurrency: 1, Listen: ":8080", AdminListen: "127.0.0.1:9090", OriginTimeout: "30s", ShutdownTimeout: "10s", Bots: []string{
 		"Googlebot", "bingbot", "DuckDuckBot", "OAI-SearchBot", "GPTBot", "ChatGPT-User", "ClaudeBot", "Claude-SearchBot", "Claude-User", "PerplexityBot", "Perplexity-User", "Meta-ExternalAgent", "Bytespider", "Applebot", "facebookexternalhit", "Twitterbot", "LinkedInBot", "Slackbot", "Discordbot",
 	}}
 }
@@ -84,7 +96,30 @@ func (c Config) OriginURL() (*url.URL, error) {
 	return u, nil
 }
 
+func (c Config) SiteURL() string {
+	if c.PublicURL != "" {
+		return c.PublicURL
+	}
+	return c.Origin
+}
+
 func (c Config) Validate() error {
+	if _, err := target.Root(c.SiteURL()); err != nil {
+		return fmt.Errorf("public_url: %w", err)
+	}
+	if c.DataDir == "" || c.MaxHTMLBytes <= 0 || c.MaxHTMLBytes > 64<<20 || c.RenderConcurrency < 1 || c.RenderConcurrency > 16 {
+		return errors.New("invalid rendering/storage limits")
+	}
+	for _, raw := range c.RenderAllowOrigins {
+		if _, err := target.Root(raw); err != nil {
+			return fmt.Errorf("render_allow_origins: %w", err)
+		}
+	}
+	settle, err := time.ParseDuration(c.RenderSettle)
+	if err != nil || settle < 0 {
+		return errors.New("render_settle must be nonnegative")
+	}
+
 	if _, err := c.OriginURL(); err != nil {
 		return err
 	}
@@ -98,7 +133,7 @@ func (c Config) Validate() error {
 	if (ip == nil || !ip.IsLoopback()) && strings.TrimSpace(c.AdminToken) == "" {
 		return errors.New("admin_token is required when admin_listen is not a loopback IP")
 	}
-	for _, value := range []string{c.OriginTimeout, c.ShutdownTimeout} {
+	for _, value := range []string{c.OriginTimeout, c.ShutdownTimeout, c.RenderTimeout} {
 		d, err := time.ParseDuration(value)
 		if err != nil || d <= 0 {
 			return fmt.Errorf("invalid positive duration %q", value)

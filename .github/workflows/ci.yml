@@ -14,5 +14,13 @@ jobs:
           go-version: '1.26.x'
       - run: test -z "$(gofmt -l cmd internal examples)"
       - run: go vet ./...
+      - name: Locate Chrome for real rendering tests
+        shell: bash
+        run: |
+          chrome_path=$(command -v google-chrome || command -v chromium || command -v chromium-browser)
+          test -n "$chrome_path"
+          echo "RENDERCACHE_TEST_CHROME=$chrome_path" >> "$GITHUB_ENV"
       - run: go test -race ./...
+        env:
+          RENDERCACHE_TEST_NO_SANDBOX: '1'
       - run: go build -o bin/rendercache ./cmd/rendercache

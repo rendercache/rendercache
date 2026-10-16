@@ -2,7 +2,6 @@ package proxy
 
 import (
 	"context"
-	"github.com/rendercache/rendercache/internal/config"
 	"io"
 	"log/slog"
 	"net/http"
@@ -10,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/rendercache/rendercache/internal/config"
 )
 
 func TestClassify(t *testing.T) {

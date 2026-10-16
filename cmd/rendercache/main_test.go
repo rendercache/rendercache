@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -94,5 +96,53 @@ func TestRunAndGracefulShutdown(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("shutdown did not finish")
+	}
+}
+
+func TestRenderInspectCommands(t *testing.T) {
+	chrome := os.Getenv("RENDERCACHE_TEST_CHROME")
+	if chrome == "" {
+		t.Skip("requires Chrome integration environment")
+	}
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		io.WriteString(w, `<main></main><script>document.querySelector('main').innerHTML='<h1 id="ready">CLI rendered</h1>'</script>`)
+	}))
+	defer origin.Close()
+	dir := t.TempDir()
+	args := []string{"--origin", origin.URL, "--public-url", "https://public.example", "--url", "/", "--data-dir", dir}
+	renderArgs := append([]string{"render"}, args...)
+	renderArgs = append(renderArgs, "--chrome-path", chrome, "--ready-selector", "#ready")
+	if os.Getenv("RENDERCACHE_TEST_NO_SANDBOX") == "1" {
+		renderArgs = append(renderArgs, "--chrome-no-sandbox")
+	}
+	var out bytes.Buffer
+	if err := run(context.Background(), renderArgs, &out, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	var receipt struct {
+		Key string `json:"key"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &receipt); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, receipt.Key+".json")); err != nil {
+		t.Fatal(err)
+	}
+	// Separate command invocation loads disk data without a Chrome dependency.
+	out.Reset()
+	if err := run(context.Background(), append([]string{"inspect"}, args...), &out, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	var record struct {
+		Result struct {
+			HTML string `json:"html"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &record); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(record.Result.HTML, "CLI rendered") || strings.Contains(record.Result.HTML, "<script>") {
+		t.Fatal(record.Result.HTML)
 	}
 }

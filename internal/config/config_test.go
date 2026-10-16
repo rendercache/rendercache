@@ -60,3 +60,27 @@ func TestLoad(t *testing.T) {
 		t.Fatalf("unexpected config: %+v", c)
 	}
 }
+
+func TestRenderingConfigurationLimits(t *testing.T) {
+	for _, mutate := range []func(*Config){
+		func(c *Config) { c.PublicURL = "https://example.com/subdir" },
+		func(c *Config) { c.RenderAllowOrigins = []string{"file:///tmp"} },
+		func(c *Config) { c.RenderTimeout = "0s" }, func(c *Config) { c.RenderSettle = "-1s" },
+		func(c *Config) { c.MaxHTMLBytes = 0 }, func(c *Config) { c.MaxHTMLBytes = 65 << 20 },
+		func(c *Config) { c.RenderConcurrency = 0 }, func(c *Config) { c.RenderConcurrency = 17 },
+	} {
+		c := Default()
+		c.Origin = "https://example.com"
+		mutate(&c)
+		if c.Validate() == nil {
+			t.Fatal("invalid render configuration accepted")
+		}
+	}
+	c := Default()
+	c.Origin = "http://127.0.0.1:8081"
+	c.PublicURL = "https://public.example"
+	c.RenderAllowOrigins = []string{"https://cdn.example"}
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}
