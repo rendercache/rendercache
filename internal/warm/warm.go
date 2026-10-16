@@ -22,6 +22,7 @@ type Discoverer interface {
 type Store interface {
 	Load(target.Page) (snapshot.Record, error)
 	Save(target.Page, render.Result) (snapshot.Record, error)
+	Delete(target.Page) error
 }
 type Options struct {
 	RefreshInterval   time.Duration
@@ -32,9 +33,16 @@ type Options struct {
 	QueueSize         int
 	MaxPages          int
 	Tick              time.Duration
+	MaxExtraPages     int
+	Site              string
+	Origin            string
 }
 type entry struct {
 	page        target.Page
+	sitemap     bool
+	withdrawn   bool
+	rerun       bool
+	force       bool
 	cached      bool
 	created     time.Time
 	due         time.Time
@@ -55,24 +63,26 @@ type PageStatus struct {
 	LastError   string    `json:"last_error,omitempty"`
 }
 type Status struct {
-	Enabled         bool         `json:"enabled"`
-	State           string       `json:"state"`
-	Discovered      int          `json:"discovered"`
-	Cached          int          `json:"cached"`
-	Missing         int          `json:"missing"`
-	Fresh           int          `json:"fresh"`
-	Stale           int          `json:"stale"`
-	Queued          int          `json:"queued"`
-	Rendering       int          `json:"rendering"`
-	Failed          int          `json:"failed_pages"`
-	RenderSuccesses uint64       `json:"render_successes"`
-	RenderFailures  uint64       `json:"render_failures"`
-	Discovering     bool         `json:"discovering"`
-	LastDiscovery   time.Time    `json:"last_discovery,omitempty"`
-	NextDiscovery   time.Time    `json:"next_discovery,omitempty"`
-	DiscoveryError  string       `json:"discovery_error,omitempty"`
-	Pages           []PageStatus `json:"pages"`
-	PagesOmitted    int          `json:"pages_omitted"`
+	Enabled           bool         `json:"enabled"`
+	State             string       `json:"state"`
+	ExtraPages        int          `json:"extra_pages"`
+	RequestRejections uint64       `json:"request_rejections"`
+	Discovered        int          `json:"discovered"`
+	Cached            int          `json:"cached"`
+	Missing           int          `json:"missing"`
+	Fresh             int          `json:"fresh"`
+	Stale             int          `json:"stale"`
+	Queued            int          `json:"queued"`
+	Rendering         int          `json:"rendering"`
+	Failed            int          `json:"failed_pages"`
+	RenderSuccesses   uint64       `json:"render_successes"`
+	RenderFailures    uint64       `json:"render_failures"`
+	Discovering       bool         `json:"discovering"`
+	LastDiscovery     time.Time    `json:"last_discovery,omitempty"`
+	NextDiscovery     time.Time    `json:"next_discovery,omitempty"`
+	DiscoveryError    string       `json:"discovery_error,omitempty"`
+	Pages             []PageStatus `json:"pages"`
+	PagesOmitted      int          `json:"pages_omitted"`
 }
 type Manager struct {
 	opts           Options
@@ -81,6 +91,9 @@ type Manager struct {
 	store          Store
 	mu             sync.Mutex
 	entries        map[string]*entry
+	extras         map[string]*entry
+	retired        map[string]*entry
+	ctx            context.Context
 	cancel         context.CancelFunc
 	started        bool
 	stopped        bool
@@ -95,16 +108,20 @@ type Manager struct {
 	active         int
 	successes      uint64
 	failures       uint64
+	rejected       uint64
 }
 
 func New(o Options, source Discoverer, engine render.Engine, store Store) (*Manager, error) {
+	if o.MaxExtraPages == 0 {
+		o.MaxExtraPages = 256
+	}
 	if o.Tick == 0 {
 		o.Tick = time.Second
 	}
-	if source == nil || engine == nil || store == nil || o.RefreshInterval <= 0 || o.DiscoveryInterval <= 0 || o.RetryBase <= 0 || o.RetryMax < o.RetryBase || o.Workers < 1 || o.Workers > 16 || o.QueueSize < 1 || o.MaxPages < 1 || o.Tick <= 0 {
+	if source == nil || engine == nil || store == nil || o.RefreshInterval <= 0 || o.DiscoveryInterval <= 0 || o.RetryBase <= 0 || o.RetryMax < o.RetryBase || o.MaxExtraPages < 1 || o.MaxExtraPages > 10000 || o.Workers < 1 || o.Workers > 16 || o.QueueSize < 1 || o.MaxPages < 1 || o.Tick <= 0 {
 		return nil, errors.New("invalid warming options")
 	}
-	return &Manager{opts: o, source: source, engine: engine, store: store, entries: map[string]*entry{}, jobs: make(chan *entry, o.QueueSize), wake: make(chan struct{}, 1)}, nil
+	return &Manager{opts: o, source: source, engine: engine, store: store, entries: map[string]*entry{}, extras: map[string]*entry{}, retired: map[string]*entry{}, jobs: make(chan *entry, o.QueueSize), wake: make(chan struct{}, 1)}, nil
 }
 func (m *Manager) Start(parent context.Context) error {
 	m.mu.Lock()
@@ -115,6 +132,7 @@ func (m *Manager) Start(parent context.Context) error {
 	m.started = true
 	ctx, cancel := context.WithCancel(parent)
 	m.cancel = cancel
+	m.ctx = ctx
 	m.wg.Add(m.opts.Workers + 2)
 	for range m.opts.Workers {
 		go func() { defer m.wg.Done(); m.worker(ctx) }()
@@ -199,13 +217,13 @@ func (m *Manager) discover(ctx context.Context) {
 					continue
 				}
 				m.mu.Lock()
-				existing := m.entries[key]
+				existing := m.lookup(key)
 				m.mu.Unlock()
 				if existing != nil {
 					next[key] = existing
 					continue
 				}
-				e := &entry{page: p, due: time.Now()}
+				e := &entry{page: p, sitemap: true, due: time.Now()}
 				record, loadErr := m.store.Load(p)
 				if loadErr == nil {
 					e.cached = true
@@ -217,6 +235,22 @@ func (m *Manager) discover(ctx context.Context) {
 				next[key] = e
 			}
 			m.mu.Lock()
+
+			for key, e := range next {
+				if current := m.lookup(key); current != nil {
+					e = current
+					next[key] = current
+				}
+				e.sitemap = true
+				delete(m.extras, key)
+				delete(m.retired, key)
+			}
+			for key, e := range m.entries {
+				if next[key] == nil && (e.active || e.queued) {
+					e.sitemap = false
+					m.retired[key] = e
+				}
+			}
 			m.entries = next
 			m.scanned = true
 			m.mu.Unlock()
@@ -271,12 +305,15 @@ func (m *Manager) dispatch(now time.Time) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	due := []*entry{}
-	for _, e := range m.entries {
+	for _, e := range m.scheduled() {
 		if !e.queued && !e.active && !now.Before(e.due) {
 			due = append(due, e)
 		}
 	}
 	sort.Slice(due, func(i, j int) bool {
+		if due[i].sitemap != due[j].sitemap {
+			return due[i].sitemap
+		}
 		if due[i].cached != due[j].cached {
 			return !due[i].cached
 		}
@@ -306,12 +343,13 @@ func (m *Manager) worker(ctx context.Context) {
 		case e = <-m.jobs:
 		}
 		m.mu.Lock()
-		if m.entries[e.page.Key()] != e {
+		if m.lookup(e.page.Key()) != e {
 			m.mu.Unlock()
 			m.notify()
 			continue
 		}
 		e.queued = false
+		e.force = false
 		e.active = true
 		e.lastAttempt = time.Now().UTC()
 		m.active++
@@ -322,9 +360,20 @@ func (m *Manager) worker(ctx context.Context) {
 		if err == nil && ctx.Err() == nil {
 			record, err = m.store.Save(e.page, result)
 		}
+		private := errors.Is(err, render.ErrPrivate)
+		if private && ctx.Err() == nil {
+			if deleteErr := m.store.Delete(e.page); deleteErr != nil {
+				err = fmt.Errorf("withdraw private snapshot: %w", deleteErr)
+			}
+		}
 		m.mu.Lock()
 		e.active = false
 		m.active--
+		if private {
+			e.withdrawn = true
+			e.cached = false
+			e.created = time.Time{}
+		}
 		if ctx.Err() == nil {
 			if err != nil {
 				m.failures++
@@ -333,12 +382,21 @@ func (m *Manager) worker(ctx context.Context) {
 				e.due = time.Now().Add(backoff(m.opts.RetryBase, m.opts.RetryMax, e.failures))
 			} else {
 				m.successes++
+				e.withdrawn = false
 				e.failures = 0
 				e.lastError = ""
 				e.cached = true
 				e.created = record.CreatedAt
 				e.due = record.CreatedAt.Add(m.opts.RefreshInterval)
 			}
+		}
+
+		if e.rerun && ctx.Err() == nil {
+			e.rerun = false
+			e.due = time.Now()
+		}
+		if m.retired[e.page.Key()] == e {
+			delete(m.retired, e.page.Key())
 		}
 		m.mu.Unlock()
 		m.notify()
@@ -348,7 +406,7 @@ func (m *Manager) Status() Status {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	now := time.Now()
-	s := Status{Enabled: true, State: "warming", Discovered: len(m.entries), Queued: len(m.jobs), Rendering: m.active, RenderSuccesses: m.successes, RenderFailures: m.failures, Discovering: m.discovering, LastDiscovery: m.lastDiscovery, NextDiscovery: m.nextDiscovery, DiscoveryError: m.discoveryError, Pages: []PageStatus{}}
+	s := Status{ExtraPages: len(m.extras), RequestRejections: m.rejected, Enabled: true, State: "warming", Discovered: len(m.entries), Queued: len(m.jobs), Rendering: m.active, RenderSuccesses: m.successes, RenderFailures: m.failures, Discovering: m.discovering, LastDiscovery: m.lastDiscovery, NextDiscovery: m.nextDiscovery, DiscoveryError: m.discoveryError, Pages: []PageStatus{}}
 	keys := make([]string, 0, len(m.entries))
 	for key := range m.entries {
 		keys = append(keys, key)
@@ -408,4 +466,105 @@ func shortError(err error) string {
 		s = s[:1024] + "…"
 	}
 	return s
+}
+
+var ErrCapacity = errors.New("request-page allowance is full")
+var ErrStopped = errors.New("warming is not running")
+
+func (m *Manager) lookup(key string) *entry {
+	if e := m.entries[key]; e != nil {
+		return e
+	}
+	if e := m.extras[key]; e != nil {
+		return e
+	}
+	return m.retired[key]
+}
+func (m *Manager) scheduled() []*entry {
+	out := make([]*entry, 0, len(m.entries)+len(m.extras))
+	for _, e := range m.entries {
+		out = append(out, e)
+	}
+	for _, e := range m.extras {
+		out = append(out, e)
+	}
+	return out
+}
+
+// Request never performs disk/network I/O. Normal misses respect failure backoff;
+// an explicit purge can force one extra pass if a render is already in flight.
+func (m *Manager) Request(p target.Page, reason string) (string, error) {
+	if err := p.Validate(); err != nil {
+		return "", err
+	}
+	if len(p.URL) > 8192 {
+		return "", errors.New("page URL exceeds 8192 bytes")
+	}
+	if m.opts.Site != "" {
+		expected, err := target.Map(m.opts.Site, m.opts.Origin, p.URL)
+		if err != nil || expected != p {
+			return "", errors.New("page is outside configured site")
+		}
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.ctx == nil || m.ctx.Err() != nil || m.stopped {
+		return "", ErrStopped
+	}
+	e := m.lookup(p.Key())
+	if e == nil {
+		if len(m.extras) >= m.opts.MaxExtraPages {
+			m.rejected++
+			return "", ErrCapacity
+		}
+		e = &entry{page: p, due: time.Now()}
+		m.extras[p.Key()] = e
+	}
+
+	if m.retired[p.Key()] == e {
+		if len(m.extras) >= m.opts.MaxExtraPages {
+			m.rejected++
+			return "", ErrCapacity
+		}
+		delete(m.retired, p.Key())
+		m.extras[p.Key()] = e
+	}
+	if reason == "cold" {
+		e.cached = false
+		e.created = time.Time{}
+	}
+	if e.active {
+		if reason == "purge" {
+			e.rerun = true
+		}
+		return "coalesced", nil
+	}
+	if e.queued {
+		return "coalesced", nil
+	}
+	if reason == "purge" || e.failures == 0 {
+		e.due = time.Now()
+		e.force = true
+	}
+	m.notify()
+	return "queued", nil
+}
+func (m *Manager) Observe(p target.Page, record snapshot.Record) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	e := m.lookup(p.Key())
+	if e != nil && (!e.cached || record.CreatedAt.After(e.created)) {
+		e.cached = true
+		e.created = record.CreatedAt
+		if e.failures == 0 && !e.active && !e.queued && !e.force {
+			e.due = record.CreatedAt.Add(m.opts.RefreshInterval)
+		}
+	}
+}
+
+func (m *Manager) Suppressed(p target.Page) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	e := m.lookup(p.Key())
+	return e != nil && e.withdrawn
 }

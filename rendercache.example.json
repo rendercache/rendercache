@@ -42,5 +42,8 @@
   "sitemap_max_documents": 128,
   "sitemap_max_depth": 4,
   "sitemap_timeout": "15s",
-  "sitemap_scan_timeout": "2m"
+  "sitemap_scan_timeout": "2m",
+  "snapshot_enabled": true,
+  "snapshot_ttl": "24h",
+  "request_page_limit": 256
 }

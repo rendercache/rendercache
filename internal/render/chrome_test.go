@@ -2,6 +2,7 @@ package render
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -89,16 +90,29 @@ func TestChromeRealRenderingAndNetworkPolicy(t *testing.T) {
 	}
 	p, _ = target.Map("https://public.example", origin.URL, "/redirect")
 	result, err = engine.Render(context.Background(), p)
-	if err != nil || result.FinalURL != "https://public.example/" || len(result.Redirects) != 1 || result.Redirects[0].Status != 302 {
+	if err != nil || result.Status != 302 || result.Location != "https://public.example/" || len(result.Redirects) != 1 || result.Redirects[0].Status != 302 {
 		t.Fatal(result, err)
 	}
-	for _, path := range []string{"/escape", "/private", "/cookie", "/cookie-redirect", "/no-store", "/json", "/missing"} {
+	for _, path := range []string{"/private", "/cookie", "/cookie-redirect", "/no-store", "/json"} {
 		t.Run(path, func(t *testing.T) {
 			p, _ := target.Map("https://public.example", origin.URL, path)
 			if _, err := engine.Render(context.Background(), p); err == nil {
 				t.Fatal("unsafe/failed page accepted")
+			} else if path != "/json" && !errors.Is(err, ErrPrivate) {
+				t.Fatalf("private outcome lost its classification: %v", err)
 			}
 		})
+	}
+	for _, tc := range []struct {
+		path     string
+		status   int
+		location string
+	}{{"/escape", 302, forbidden.URL}, {"/missing", 404, ""}} {
+		p, _ := target.Map("https://public.example", origin.URL, tc.path)
+		out, err := engine.Render(context.Background(), p)
+		if err != nil || out.Status != tc.status || out.Location != tc.location || out.HTML != "" {
+			t.Fatal(out, err)
+		}
 	}
 	if forbiddenCalls.Load() != 0 {
 		t.Fatal("redirect escaped origin")

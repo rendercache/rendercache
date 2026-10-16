@@ -40,7 +40,7 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) error {
 		return nil
 	}
 	if args[0] == "version" {
-		fmt.Fprintln(out, "rendercache 0.1.0-dev (session 3)")
+		fmt.Fprintln(out, "rendercache 0.1.0-dev (session 4)")
 		return nil
 	}
 	if args[0] != "serve" && args[0] != "render" && args[0] != "inspect" {
@@ -59,6 +59,8 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) error {
 	noSandbox := fs.Bool("chrome-no-sandbox", false, "explicitly disable Chrome sandbox (isolated environments only)")
 	ready := fs.String("ready-selector", "", "CSS selector that indicates content is ready")
 	renderTimeout := fs.String("render-timeout", "", "hard render timeout including startup and capacity wait")
+	snapshots := fs.Bool("snapshots", true, "serve saved bot snapshots")
+	snapshotTTL := fs.String("snapshot-ttl", "", "HTTP snapshot freshness age")
 	warmFlag := fs.Bool("warm", true, "enable sitemap warming during serve (default true)")
 	sitemapURL := fs.String("sitemap", "", "public sitemap URL or root-relative path; replaces configured sitemap_urls")
 	warmInterval := fs.String("warm-interval", "", "snapshot refresh interval")
@@ -78,6 +80,10 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) error {
 	}
 	fs.Visit(func(f *flag.Flag) {
 		switch f.Name {
+		case "snapshots":
+			c.SnapshotEnabled = *snapshots
+		case "snapshot-ttl":
+			c.SnapshotTTL = *snapshotTTL
 		case "warm":
 			c.WarmEnabled = *warmFlag
 		case "sitemap":
@@ -167,6 +173,16 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) error {
 	}
 	defer adminLn.Close()
 
+	var store *snapshot.Store
+	if c.SnapshotEnabled || c.WarmEnabled {
+		store, err = snapshot.Open(c.DataDir, c.MaxHTMLBytes)
+		if err != nil {
+			return err
+		}
+	}
+	if c.SnapshotEnabled {
+		g.SetSnapshotStore(store)
+	}
 	if c.WarmEnabled {
 		duration := func(s string) time.Duration { d, _ := time.ParseDuration(s); return d }
 		source, err := sitemap.New(sitemap.Options{Site: c.SiteURL(), Origin: c.Origin, URLs: c.SitemapURLs, MaxBytes: c.SitemapMaxBytes, MaxURLs: c.SitemapMaxURLs, MaxDocuments: c.SitemapMaxDocuments, MaxDepth: c.SitemapMaxDepth, Timeout: duration(c.SitemapTimeout), ScanTimeout: duration(c.SitemapScanTimeout)})
@@ -178,11 +194,7 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) error {
 		if err != nil {
 			return err
 		}
-		store, err := snapshot.Open(c.DataDir, c.MaxHTMLBytes)
-		if err != nil {
-			return err
-		}
-		manager, err := warm.New(warm.Options{RefreshInterval: duration(c.WarmInterval), DiscoveryInterval: duration(c.SitemapInterval), RetryBase: duration(c.WarmRetryBase), RetryMax: duration(c.WarmRetryMax), Workers: c.RenderConcurrency, QueueSize: c.WarmQueueSize, MaxPages: c.SitemapMaxURLs}, source, engine, store)
+		manager, err := warm.New(warm.Options{RefreshInterval: duration(c.WarmInterval), DiscoveryInterval: duration(c.SitemapInterval), RetryBase: duration(c.WarmRetryBase), RetryMax: duration(c.WarmRetryMax), Workers: c.RenderConcurrency, QueueSize: c.WarmQueueSize, MaxPages: c.SitemapMaxURLs, MaxExtraPages: c.RequestPageLimit, Site: c.SiteURL(), Origin: c.Origin}, source, engine, store)
 		if err != nil {
 			return err
 		}
@@ -202,7 +214,7 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) error {
 	}{{publicServer, publicLn}, {adminServer, adminLn}} {
 		go func(s *http.Server, l net.Listener) { errCh <- s.Serve(l) }(entry.s, entry.l)
 	}
-	logger.Info("listening", "public", publicLn.Addr().String(), "admin", adminLn.Addr().String(), "origin", c.Origin, "warming_enabled", c.WarmEnabled, "snapshot_serving_enabled", false)
+	logger.Info("listening", "public", publicLn.Addr().String(), "admin", adminLn.Addr().String(), "origin", c.Origin, "warming_enabled", c.WarmEnabled, "snapshot_serving_enabled", c.SnapshotEnabled)
 	var serveErr error
 	select {
 	case <-ctx.Done():

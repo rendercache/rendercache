@@ -104,3 +104,32 @@ func TestConcurrentAtomicReplace(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func TestOutcomesAndValidators(t *testing.T) {
+	s, _ := Open(t.TempDir(), 1024)
+	p := testPage(t)
+	var previous string
+	for _, r := range []render.Result{{Status: 404}, {Status: 410}, {Status: 301, Location: "https://elsewhere.example/"}, {Status: 200, HTML: "restored"}} {
+		saved, err := s.Save(p, r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		loaded, err := s.Load(p)
+		if err != nil || loaded.Result.Status != r.Status {
+			t.Fatal(loaded, err)
+		}
+		if saved.ETag() == previous {
+			t.Fatal("response semantics missing from validator")
+		}
+		previous = saved.ETag()
+	}
+	if _, err := s.Save(p, render.Result{Status: 200, HTML: "private", Headers: map[string]string{"Set-Cookie": "session=x"}}); err == nil {
+		t.Fatal("private headers accepted")
+	}
+	if err := s.Delete(p); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Load(p); !errors.Is(err, ErrNotFound) {
+		t.Fatal(err)
+	}
+}

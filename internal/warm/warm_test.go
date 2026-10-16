@@ -305,3 +305,121 @@ func TestCorruptSnapshotIsRebuilt(t *testing.T) {
 		t.Fatal("corrupt snapshot not repaired", err)
 	}
 }
+
+func TestRequestAllowanceDedupAndRediscovery(t *testing.T) {
+	store, _ := snapshot.Open(t.TempDir(), 1024)
+	o := opts()
+	o.MaxExtraPages = 1
+	o.DiscoveryInterval = 10 * time.Millisecond
+	gate := make(chan struct{})
+	var calls atomic.Int32
+	m, _ := New(o, discoverFunc(func(context.Context) ([]target.Page, error) { return nil, nil }), renderFunc(func(ctx context.Context, p target.Page) (render.Result, error) {
+		calls.Add(1)
+		select {
+		case <-gate:
+		case <-ctx.Done():
+			return render.Result{}, ctx.Err()
+		}
+		return result(p), nil
+	}), store)
+	m.Start(context.Background())
+	defer m.Close()
+	for range 100 {
+		if _, err := m.Request(page("/extra"), "cold"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	wait(t, func() bool { return calls.Load() == 1 })
+	if _, err := m.Request(page("/overflow"), "cold"); !errors.Is(err, ErrCapacity) {
+		t.Fatal(err)
+	}
+	close(gate)
+	wait(t, func() bool { return m.Status().RenderSuccesses == 1 })
+	if m.Status().ExtraPages != 1 || m.Status().Discovered != 0 {
+		t.Fatal(m.Status())
+	}
+	m.Close()
+	if _, err := m.Request(page("/extra"), "purge"); !errors.Is(err, ErrStopped) {
+		t.Fatal(err)
+	}
+}
+
+func TestPurgeIntentSurvivesObservationUnderQueuePressure(t *testing.T) {
+	store, _ := snapshot.Open(t.TempDir(), 1024)
+	p := page("/target")
+	record, _ := store.Save(p, result(p))
+	gate := make(chan struct{})
+	var targetRenders atomic.Int32
+	o := opts()
+	o.Workers = 1
+	o.QueueSize = 1
+	o.MaxExtraPages = 4
+	engine := renderFunc(func(ctx context.Context, p target.Page) (render.Result, error) {
+		if p.URL == page("/block").URL {
+			select {
+			case <-gate:
+			case <-ctx.Done():
+				return render.Result{}, ctx.Err()
+			}
+		}
+		if p.URL == page("/target").URL {
+			targetRenders.Add(1)
+		}
+		return result(p), nil
+	})
+	m, _ := New(o, discoverFunc(func(context.Context) ([]target.Page, error) { return nil, nil }), engine, store)
+	m.Start(context.Background())
+	defer m.Close()
+	m.Request(page("/block"), "cold")
+	wait(t, func() bool { return m.Status().Rendering == 1 })
+	m.Request(page("/queued"), "cold")
+	wait(t, func() bool { return m.Status().Queued == 1 })
+	m.Request(p, "purge")
+	m.Observe(p, record)
+	close(gate)
+	wait(t, func() bool { return targetRenders.Load() == 1 })
+}
+
+func TestPurgeRetiredInFlightPageGetsFollowup(t *testing.T) {
+	store, _ := snapshot.Open(t.TempDir(), 1024)
+	p := page("/retired")
+	var listed atomic.Bool
+	listed.Store(true)
+	gate := make(chan struct{})
+	var calls atomic.Int32
+	o := opts()
+	o.Workers = 1
+	o.DiscoveryInterval = 10 * time.Millisecond
+	o.MaxExtraPages = 1
+	source := discoverFunc(func(context.Context) ([]target.Page, error) {
+		if listed.Load() {
+			return []target.Page{p}, nil
+		}
+		return nil, nil
+	})
+	engine := renderFunc(func(ctx context.Context, p target.Page) (render.Result, error) {
+		n := calls.Add(1)
+		if n == 1 {
+			select {
+			case <-gate:
+			case <-ctx.Done():
+				return render.Result{}, ctx.Err()
+			}
+		}
+		return result(p), nil
+	})
+	m, _ := New(o, source, engine, store)
+	m.Start(context.Background())
+	defer m.Close()
+	wait(t, func() bool { return calls.Load() == 1 })
+	listed.Store(false)
+	wait(t, func() bool { return m.Status().Discovered == 0 })
+	if _, err := m.Request(p, "purge"); err != nil {
+		t.Fatal(err)
+	}
+	close(gate)
+	wait(t, func() bool { return calls.Load() == 2 })
+	if m.Status().ExtraPages != 1 {
+		t.Fatal("retired request not admitted")
+	}
+}

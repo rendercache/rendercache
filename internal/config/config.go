@@ -18,6 +18,9 @@ import (
 // Config is the on-disk JSON configuration. CLI flags override these values.
 type Config struct {
 	Origin              string   `json:"origin"`
+	SnapshotEnabled     bool     `json:"snapshot_enabled"`
+	SnapshotTTL         string   `json:"snapshot_ttl"`
+	RequestPageLimit    int      `json:"request_page_limit"`
 	WarmEnabled         bool     `json:"warm_enabled"`
 	SitemapURLs         []string `json:"sitemap_urls"`
 	WarmInterval        string   `json:"warm_interval"`
@@ -51,7 +54,7 @@ type Config struct {
 
 func Default() Config {
 	return Config{
-		Origin: "", PublicURL: "", Listen: ":8080", AdminListen: "127.0.0.1:9090",
+		SnapshotEnabled: true, SnapshotTTL: "24h", RequestPageLimit: 256, Origin: "", PublicURL: "", Listen: ":8080", AdminListen: "127.0.0.1:9090",
 		OriginTimeout: "30s", ShutdownTimeout: "10s",
 		DataDir: "data/snapshots", RenderTimeout: "30s", RenderSettle: "500ms", MaxHTMLBytes: 8 << 20, RenderConcurrency: 1,
 		WarmEnabled: true, SitemapURLs: []string{"/sitemap.xml"}, WarmInterval: "24h", SitemapInterval: "15m",
@@ -128,6 +131,13 @@ func (c Config) SiteURL() string {
 }
 
 func (c Config) Validate() error {
+	ttl, err := time.ParseDuration(c.SnapshotTTL)
+	if err != nil || ttl < time.Second {
+		return errors.New("snapshot_ttl must be at least 1s")
+	}
+	if c.RequestPageLimit < 1 || c.RequestPageLimit > 10000 {
+		return errors.New("request_page_limit must be between 1 and 10000")
+	}
 	if _, err := target.Root(c.SiteURL()); err != nil {
 		return fmt.Errorf("public_url: %w", err)
 	}

@@ -262,7 +262,7 @@ func TestServeWarmsBeforeBotAndReusesDisk(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if s.Warming.Cached != 2 || s.Warming.Discovered != 2 || s.Warming.Successes != 2 || s.Requests != 0 || !s.Rendering || s.Serving {
+	if s.Warming.Cached != 2 || s.Warming.Discovered != 2 || s.Warming.Successes != 2 || s.Requests != 0 || !s.Rendering || !s.Serving {
 		t.Fatalf("warming did not prepare pages before bot: %+v", s)
 	}
 	store, _ := snapshot.Open(cfg.DataDir, cfg.MaxHTMLBytes)
@@ -280,8 +280,8 @@ func TestServeWarmsBeforeBotAndReusesDisk(t *testing.T) {
 		t.Fatal(err)
 	}
 	resp.Body.Close()
-	if resp.Header.Get("X-RenderCache") != "MISS" {
-		t.Fatal("session 3 should still proxy bots")
+	if resp.Header.Get("X-RenderCache") != "HIT" {
+		t.Fatal("warmed bot should receive a snapshot")
 	}
 	stop()
 	stopped = true

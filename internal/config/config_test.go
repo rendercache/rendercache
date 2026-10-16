@@ -107,3 +107,14 @@ func TestSitemapAndWarmingLimits(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestSnapshotConfigurationLimits(t *testing.T) {
+	for _, change := range []func(*Config){func(c *Config) { c.SnapshotTTL = "0s" }, func(c *Config) { c.RequestPageLimit = 0 }, func(c *Config) { c.RequestPageLimit = 10001 }} {
+		c := Default()
+		c.Origin = "https://example.com"
+		change(&c)
+		if c.Validate() == nil {
+			t.Fatal("invalid snapshot configuration accepted")
+		}
+	}
+}

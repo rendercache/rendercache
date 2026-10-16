@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/rendercache/rendercache/internal/config"
+	"github.com/rendercache/rendercache/internal/snapshot"
 	"github.com/rendercache/rendercache/internal/warm"
 )
 
@@ -26,7 +27,7 @@ type Route struct {
 	Reason  string
 }
 
-// Classify only admits public document requests to the future snapshot path.
+// Classify only admits public document requests to the snapshot path.
 // User agents are claims, not verified crawler identities.
 func Classify(r *http.Request, bots []string) Route {
 	bypass := func(reason string) Route { return Route{Outcome: "BYPASS", Reason: reason} }
@@ -38,6 +39,12 @@ func Classify(r *http.Request, bots []string) Route {
 	}
 	if r.Header.Get("Range") != "" || r.Header.Get("Upgrade") != "" {
 		return bypass("protocol")
+	}
+	if r.Header.Get("If-Match") != "" || r.Header.Get("If-Unmodified-Since") != "" {
+		return bypass("precondition")
+	}
+	if strings.Contains(strings.ToLower(r.Header.Get("Cache-Control")), "no-cache") || strings.Contains(strings.ToLower(r.Header.Get("Cache-Control")), "max-age=0") || strings.EqualFold(r.Header.Get("Pragma"), "no-cache") {
+		return bypass("revalidate")
 	}
 	if strings.Contains(strings.ToLower(r.Header.Get("Cache-Control")), "no-store") {
 		return bypass("no-store")
@@ -84,6 +91,9 @@ func acceptsHTML(value string) bool {
 type Gateway struct {
 	cfg       config.Config
 	warming   *warm.Manager
+	store     *snapshot.Store
+	hits      atomic.Uint64
+	stale     atomic.Uint64
 	proxy     *httputil.ReverseProxy
 	logger    *slog.Logger
 	started   time.Time
@@ -115,7 +125,7 @@ func New(c config.Config, logger *slog.Logger) (*Gateway, error) {
 		ModifyResponse: func(resp *http.Response) error {
 			route, _ := resp.Request.Context().Value(routeKey{}).(Route)
 			resp.Header.Set("X-RenderCache", route.Outcome)
-			resp.Header.Add("Vary", "User-Agent, Cookie, Authorization")
+			resp.Header.Add("Vary", "User-Agent, Cookie, Authorization, Accept")
 			if route.Outcome == "MISS" {
 				g.logger.Info("crawler_response", "crawler_claim", route.Crawler, "path", resp.Request.URL.EscapedPath(), "status", resp.StatusCode, "cache", route.Outcome, "snapshot_served", false)
 			}
@@ -125,7 +135,7 @@ func New(c config.Config, logger *slog.Logger) (*Gateway, error) {
 			route, _ := r.Context().Value(routeKey{}).(Route)
 			logger.Warn("origin_error", "path", r.URL.EscapedPath(), "error", err, "cache", route.Outcome)
 			w.Header().Set("X-RenderCache", route.Outcome)
-			w.Header().Add("Vary", "User-Agent, Cookie, Authorization")
+			w.Header().Add("Vary", "User-Agent, Cookie, Authorization, Accept")
 			http.Error(w, "origin unavailable", http.StatusBadGateway)
 		},
 	}
@@ -136,6 +146,9 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	route := Classify(r, g.cfg.Bots)
 	g.requests.Add(1)
 	if route.Outcome == "MISS" {
+		if g.store != nil && g.snapshot(w, r, route) {
+			return
+		}
 		g.misses.Add(1)
 	}
 	// Ignore untrusted diagnostic headers; the decision comes only from classification.
@@ -145,6 +158,8 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // SetWarmer must be called before starting the HTTP listeners.
 func (g *Gateway) SetWarmer(manager *warm.Manager) { g.warming = manager }
+
+func (g *Gateway) SetSnapshotStore(store *snapshot.Store) { g.store = store }
 
 func (g *Gateway) Close() { g.transport.CloseIdleConnections() }
 
@@ -162,8 +177,10 @@ func (g *Gateway) AdminHandler() http.Handler {
 		if g.warming != nil {
 			warming = g.warming.Status()
 		}
-		json.NewEncoder(w).Encode(map[string]any{"warming": warming, "stage": "session-3-sitemap-warming", "manual_render_available": true, "origin": g.cfg.Origin, "uptime_seconds": int(time.Since(g.started).Seconds()), "requests": g.requests.Load(), "bot_cache_misses": g.misses.Load(), "rendering_enabled": g.warming != nil, "snapshot_serving_enabled": false})
+		json.NewEncoder(w).Encode(map[string]any{"warming": warming, "bot_cache_hits": g.hits.Load(), "bot_cache_stale": g.stale.Load(), "stage": "session-4-snapshot-serving", "manual_render_available": true, "origin": g.cfg.Origin, "uptime_seconds": int(time.Since(g.started).Seconds()), "requests": g.requests.Load(), "bot_cache_misses": g.misses.Load(), "rendering_enabled": g.warming != nil, "snapshot_serving_enabled": g.store != nil})
 	})
+	mux.HandleFunc("POST /purge", g.purge)
+
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if g.cfg.AdminToken != "" && subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte("Bearer "+g.cfg.AdminToken)) != 1 {
 			w.Header().Set("WWW-Authenticate", "Bearer")

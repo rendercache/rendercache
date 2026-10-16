@@ -47,7 +47,10 @@ func (s *Store) Save(p target.Page, result render.Result) (Record, error) {
 	if err := p.Validate(); err != nil {
 		return Record{}, err
 	}
-	if result.Status != 200 || result.HTML == "" || int64(len(result.HTML)) > s.maxHTML {
+	if err := render.ValidateOutcome(p, result); err != nil {
+		return Record{}, err
+	}
+	if int64(len(result.HTML)) > s.maxHTML {
 		return Record{}, errors.New("only nonempty, successful HTML within size limit can be saved")
 	}
 	record := Record{Version: 1, Key: p.Key(), Page: p, CreatedAt: time.Now().UTC(), ContentHash: hash(result.HTML), Result: result}
@@ -112,8 +115,39 @@ func (s *Store) Load(p target.Page) (Record, error) {
 	if decoder.Decode(&extra) != io.EOF {
 		return record, errors.New("trailing snapshot data")
 	}
-	if record.Version != 1 || record.Key != p.Key() || record.Page != p || record.CreatedAt.IsZero() || record.Result.Status != 200 || record.Result.HTML == "" || int64(len(record.Result.HTML)) > s.maxHTML || record.ContentHash != hash(record.Result.HTML) {
+	if record.Version != 1 || record.Key != p.Key() || record.Page != p || record.CreatedAt.IsZero() || render.ValidateOutcome(p, record.Result) != nil || int64(len(record.Result.HTML)) > s.maxHTML || record.ContentHash != hash(record.Result.HTML) {
 		return Record{}, errors.New("invalid snapshot identity or checksum")
 	}
 	return record, nil
+}
+
+// ETag covers response status, location and safe metadata as well as body bytes.
+func (r Record) ETag() string {
+	b, _ := json.Marshal(struct {
+		Status   int
+		Location string
+		Hash     string
+		Headers  map[string]string
+	}{r.Result.Status, r.Result.Location, r.ContentHash, r.Result.Headers})
+	sum := sha256.Sum256(b)
+	return `"rc-` + hex.EncodeToString(sum[:]) + `"`
+}
+
+func (s *Store) Delete(p target.Page) error {
+	if err := p.Validate(); err != nil {
+		return err
+	}
+	err := os.Remove(filepath.Join(s.dir, p.Key()+".json"))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	dir, err := os.Open(s.dir)
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	return dir.Sync()
 }

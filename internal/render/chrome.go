@@ -94,12 +94,11 @@ func (c *Chrome) Render(parent context.Context, p target.Page) (Result, error) {
 	mainFrame := frameTree.FrameTree.Frame.ID
 	eventsCtx, stopEvents := context.WithCancel(tab)
 	paused := chromedp.Events(eventsCtx, fetch.RequestPaused)
-	redirects := chromedp.Events(eventsCtx, network.RequestWillBeSent)
 	extraInfo := chromedp.Events(eventsCtx, network.ResponseReceivedExtraInfo)
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	var eventErr error
-	var chain []Redirect
+	var early *Result
 	fail := func(err error) {
 		mu.Lock()
 		if eventErr == nil {
@@ -107,7 +106,7 @@ func (c *Chrome) Render(parent context.Context, p target.Page) (Result, error) {
 		}
 		mu.Unlock()
 	}
-	wg.Add(3)
+	wg.Add(2)
 	go func() {
 		defer wg.Done()
 		for e, err := range paused {
@@ -127,8 +126,37 @@ func (c *Chrome) Render(parent context.Context, p target.Page) (Result, error) {
 						}
 					}
 				}
+
+				if !unsafe && e.FrameID == mainFrame && e.ResourceType == network.ResourceTypeDocument && (e.ResponseStatusCode == 301 || e.ResponseStatusCode == 302 || e.ResponseStatusCode == 303 || e.ResponseStatusCode == 307 || e.ResponseStatusCode == 308) {
+					location := ""
+					headers := map[string]string{"Content-Type": "text/html; charset=utf-8"}
+					for _, h := range e.ResponseHeaders {
+						if strings.EqualFold(h.Name, "Location") {
+							location = h.Value
+						}
+						if strings.EqualFold(h.Name, "X-Robots-Tag") || strings.EqualFold(h.Name, "Content-Language") {
+							headers[http.CanonicalHeaderKey(h.Name)] = h.Value
+						}
+					}
+					if location == "" {
+						fail(errors.New("redirect has no location"))
+					} else if mapped, locErr := redirectLocation(p, e.Request.URL, location); locErr != nil {
+						fail(locErr)
+					} else {
+						mu.Lock()
+						early = &Result{Status: int(e.ResponseStatusCode), Location: mapped, FinalURL: p.URL, Headers: headers, Renderer: result.Renderer, Redirects: []Redirect{{URL: e.Request.URL, Status: e.ResponseStatusCode, Location: mapped}}}
+						mu.Unlock()
+					}
+					// Deliver a neutral local document to finish navigation without fetching
+					// the redirect target. The returned outcome preserves original semantics.
+					_, err = chromedp.Call(tab, fetch.FulfillRequest, fetch.FulfillRequestParams{RequestID: e.RequestID, ResponseCode: 200, ResponseHeaders: []*fetch.HeaderEntry{{Name: "Content-Type", Value: "text/html"}}, Body: []byte("<html><head></head><body></body></html>")})
+					if err != nil {
+						fail(err)
+					}
+					continue
+				}
 				if unsafe {
-					fail(errors.New("document response is not eligible for a shared public snapshot"))
+					fail(ErrPrivate)
 					_, err = chromedp.Call(tab, fetch.FailRequest, fetch.FailRequestParams{RequestID: e.RequestID, ErrorReason: network.ErrorReasonBlockedByClient})
 				} else {
 					_, err = chromedp.Call(tab, fetch.ContinueResponse, fetch.ContinueResponseParams{RequestID: e.RequestID})
@@ -168,26 +196,13 @@ func (c *Chrome) Render(parent context.Context, p target.Page) (Result, error) {
 	}()
 	go func() {
 		defer wg.Done()
-		for e, err := range redirects {
-			if err != nil {
-				return
-			}
-			if e.FrameID == mainFrame && e.RedirectResponse != nil {
-				mu.Lock()
-				chain = append(chain, Redirect{URL: e.RedirectResponse.URL, Status: e.RedirectResponse.Status})
-				mu.Unlock()
-			}
-		}
-	}()
-	go func() {
-		defer wg.Done()
 		for e, err := range extraInfo {
 			if err != nil {
 				return
 			}
 			for k, v := range e.Headers {
 				if privateHeader(k, fmt.Sprint(v)) {
-					fail(errors.New("response is not eligible for a shared public snapshot"))
+					fail(ErrPrivate)
 				}
 			}
 		}
@@ -214,10 +229,32 @@ func (c *Chrome) Render(parent context.Context, p target.Page) (Result, error) {
 	}
 	response, err := chromedp.Run(tab, chromedp.NavigateResponse(p.Origin))
 	if err != nil {
+		stopEvents()
+		wg.Wait()
+		mu.Lock()
+		defer mu.Unlock()
+		if eventErr != nil {
+			return Result{}, eventErr
+		}
 		return result, fmt.Errorf("navigate: %w", err)
 	}
 	if response == nil {
 		return result, errors.New("missing document HTTP response")
+	}
+
+	mu.Lock()
+	earlyCopy := early
+	mu.Unlock()
+	if earlyCopy != nil {
+		stopEvents()
+		wg.Wait()
+		mu.Lock()
+		defer mu.Unlock()
+		if eventErr != nil {
+			return Result{}, eventErr
+		}
+		earlyCopy.Duration = time.Since(started)
+		return *earlyCopy, ValidateOutcome(p, *earlyCopy)
 	}
 	result.Headers = map[string]string{"Content-Type": "text/html; charset=utf-8"}
 	for k, v := range response.Headers {
@@ -226,6 +263,25 @@ func (c *Chrome) Render(parent context.Context, p target.Page) (Result, error) {
 		}
 	}
 	result.Status = int(response.Status)
+
+	// Finish response metadata before classifying a redirect or removal. Ordinary
+	// HTML keeps the event stream alive until readiness/capture completes.
+	if result.Status == 404 || result.Status == 410 {
+		stopEvents()
+		wg.Wait()
+		mu.Lock()
+		defer mu.Unlock()
+		if eventErr != nil {
+			return Result{}, eventErr
+		}
+		result.FinalURL = p.URL
+		result.Duration = time.Since(started)
+		return result, ValidateOutcome(p, result)
+	}
+
+	if result.Status == 401 || result.Status == 403 {
+		return Result{}, ErrPrivate
+	}
 	if result.Status != 200 {
 		return result, fmt.Errorf("document returned HTTP %d", result.Status)
 	}
@@ -234,7 +290,7 @@ func (c *Chrome) Render(parent context.Context, p target.Page) (Result, error) {
 	}
 	for k, v := range response.Headers {
 		if privateHeader(k, fmt.Sprint(v)) {
-			return result, errors.New("document response is not eligible for a shared public snapshot")
+			return result, ErrPrivate
 		}
 	}
 
@@ -289,7 +345,6 @@ func (c *Chrome) Render(parent context.Context, p target.Page) (Result, error) {
 	if eventErr != nil {
 		return Result{}, eventErr
 	}
-	result.Redirects = chain
 	result.Duration = time.Since(started)
 	result.BlockedRequests = guard.blocked.Load()
 	return result, nil
