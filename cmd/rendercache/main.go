@@ -19,8 +19,10 @@ import (
 	"github.com/rendercache/rendercache/internal/config"
 	"github.com/rendercache/rendercache/internal/proxy"
 	"github.com/rendercache/rendercache/internal/render"
+	"github.com/rendercache/rendercache/internal/sitemap"
 	"github.com/rendercache/rendercache/internal/snapshot"
 	"github.com/rendercache/rendercache/internal/target"
+	"github.com/rendercache/rendercache/internal/warm"
 )
 
 func main() {
@@ -38,7 +40,7 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) error {
 		return nil
 	}
 	if args[0] == "version" {
-		fmt.Fprintln(out, "rendercache 0.1.0-dev (session 2)")
+		fmt.Fprintln(out, "rendercache 0.1.0-dev (session 3)")
 		return nil
 	}
 	if args[0] != "serve" && args[0] != "render" && args[0] != "inspect" {
@@ -57,6 +59,10 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) error {
 	noSandbox := fs.Bool("chrome-no-sandbox", false, "explicitly disable Chrome sandbox (isolated environments only)")
 	ready := fs.String("ready-selector", "", "CSS selector that indicates content is ready")
 	renderTimeout := fs.String("render-timeout", "", "hard render timeout including startup and capacity wait")
+	warmFlag := fs.Bool("warm", true, "enable sitemap warming during serve (default true)")
+	sitemapURL := fs.String("sitemap", "", "public sitemap URL or root-relative path; replaces configured sitemap_urls")
+	warmInterval := fs.String("warm-interval", "", "snapshot refresh interval")
+	sitemapInterval := fs.String("sitemap-interval", "", "sitemap rediscovery interval")
 	if err := fs.Parse(args[1:]); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
@@ -72,6 +78,14 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) error {
 	}
 	fs.Visit(func(f *flag.Flag) {
 		switch f.Name {
+		case "warm":
+			c.WarmEnabled = *warmFlag
+		case "sitemap":
+			c.SitemapURLs = []string{*sitemapURL}
+		case "warm-interval":
+			c.WarmInterval = *warmInterval
+		case "sitemap-interval":
+			c.SitemapInterval = *sitemapInterval
 		case "public-url":
 			c.PublicURL = *publicURL
 		case "data-dir":
@@ -117,9 +131,7 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) error {
 			}
 			return json.NewEncoder(out).Encode(record)
 		}
-		timeout, _ := time.ParseDuration(c.RenderTimeout)
-		settle, _ := time.ParseDuration(c.RenderSettle)
-		engine, err := render.NewChrome(render.Options{ChromePath: c.ChromePath, NoSandbox: c.ChromeNoSandbox, Timeout: timeout, Settle: settle, ReadySelector: c.ReadySelector, MaxHTMLBytes: c.MaxHTMLBytes, AllowedOrigins: c.RenderAllowOrigins, Concurrency: c.RenderConcurrency})
+		engine, err := newRenderer(c)
 		if err != nil {
 			return err
 		}
@@ -136,6 +148,8 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) error {
 	if *pageURL != "" {
 		return errors.New("--url is only used by render/inspect")
 	}
+	workCtx, stopWarming := context.WithCancel(ctx)
+	defer stopWarming()
 	logger := slog.New(slog.NewJSONHandler(errOut, nil))
 	g, err := proxy.New(c, logger)
 	if err != nil {
@@ -152,6 +166,32 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) error {
 		return fmt.Errorf("admin listener: %w", err)
 	}
 	defer adminLn.Close()
+
+	if c.WarmEnabled {
+		duration := func(s string) time.Duration { d, _ := time.ParseDuration(s); return d }
+		source, err := sitemap.New(sitemap.Options{Site: c.SiteURL(), Origin: c.Origin, URLs: c.SitemapURLs, MaxBytes: c.SitemapMaxBytes, MaxURLs: c.SitemapMaxURLs, MaxDocuments: c.SitemapMaxDocuments, MaxDepth: c.SitemapMaxDepth, Timeout: duration(c.SitemapTimeout), ScanTimeout: duration(c.SitemapScanTimeout)})
+		if err != nil {
+			return err
+		}
+		defer source.Close()
+		engine, err := newRenderer(c)
+		if err != nil {
+			return err
+		}
+		store, err := snapshot.Open(c.DataDir, c.MaxHTMLBytes)
+		if err != nil {
+			return err
+		}
+		manager, err := warm.New(warm.Options{RefreshInterval: duration(c.WarmInterval), DiscoveryInterval: duration(c.SitemapInterval), RetryBase: duration(c.WarmRetryBase), RetryMax: duration(c.WarmRetryMax), Workers: c.RenderConcurrency, QueueSize: c.WarmQueueSize, MaxPages: c.SitemapMaxURLs}, source, engine, store)
+		if err != nil {
+			return err
+		}
+		g.SetWarmer(manager)
+		if err = manager.Start(workCtx); err != nil {
+			return err
+		}
+		defer manager.Close()
+	}
 	upstreamTimeout, _ := time.ParseDuration(c.OriginTimeout)
 	publicServer := &http.Server{Handler: g, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second, WriteTimeout: upstreamTimeout + 5*time.Second, MaxHeaderBytes: 1 << 20}
 	adminServer := &http.Server{Handler: g.AdminHandler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, IdleTimeout: 30 * time.Second}
@@ -162,12 +202,13 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) error {
 	}{{publicServer, publicLn}, {adminServer, adminLn}} {
 		go func(s *http.Server, l net.Listener) { errCh <- s.Serve(l) }(entry.s, entry.l)
 	}
-	logger.Info("listening", "public", publicLn.Addr().String(), "admin", adminLn.Addr().String(), "origin", c.Origin, "rendering_enabled", false)
+	logger.Info("listening", "public", publicLn.Addr().String(), "admin", adminLn.Addr().String(), "origin", c.Origin, "warming_enabled", c.WarmEnabled, "snapshot_serving_enabled", false)
 	var serveErr error
 	select {
 	case <-ctx.Done():
 	case serveErr = <-errCh:
 	}
+	stopWarming()
 	duration, _ := time.ParseDuration(c.ShutdownTimeout)
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), duration)
 	defer cancel()
@@ -192,4 +233,10 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) error {
 		return serveErr
 	}
 	return shutdownErr
+}
+
+func newRenderer(c config.Config) (*render.Chrome, error) {
+	timeout, _ := time.ParseDuration(c.RenderTimeout)
+	settle, _ := time.ParseDuration(c.RenderSettle)
+	return render.NewChrome(render.Options{ChromePath: c.ChromePath, NoSandbox: c.ChromeNoSandbox, Timeout: timeout, Settle: settle, ReadySelector: c.ReadySelector, MaxHTMLBytes: c.MaxHTMLBytes, AllowedOrigins: c.RenderAllowOrigins, Concurrency: c.RenderConcurrency})
 }

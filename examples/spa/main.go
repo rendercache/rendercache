@@ -8,19 +8,32 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
+
+	"github.com/rendercache/rendercache/internal/target"
 )
 
 func main() {
 	listen := flag.String("listen", "127.0.0.1:8081", "fixture listen address")
+	public := flag.String("public-url", "", "public sitemap root; defaults to request Host")
 	flag.Parse()
-	handler, err := Handler()
+	handler, err := HandlerForSite(*public)
 	if err != nil {
 		log.Fatal(err)
 	}
 	fmt.Println("JavaScript fixture at http://" + *listen)
 	log.Fatal(http.ListenAndServe(*listen, handler))
 }
-func Handler() (http.Handler, error) {
+func Handler() (http.Handler, error) { return HandlerForSite("") }
+func HandlerForSite(public string) (http.Handler, error) {
+	if public != "" {
+		root, err := target.Root(public)
+		if err != nil {
+			return nil, err
+		}
+		public = root.String()
+	}
+
 	html, err := os.ReadFile("examples/spa/index.html")
 	if err != nil {
 		return nil, err
@@ -28,7 +41,12 @@ func Handler() (http.Handler, error) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /sitemap.xml", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/xml")
-		fmt.Fprintf(w, `<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>http://%s/</loc></url><url><loc>http://%s/about</loc></url></urlset>`, r.Host, r.Host)
+		root := public
+		if root == "" {
+			root = "http://" + r.Host
+		}
+		root = strings.TrimRight(root, "/")
+		fmt.Fprintf(w, `<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>%s/</loc></url><url><loc>%s/about</loc></url></urlset>`, root, root)
 	})
 	mux.HandleFunc("GET /api/page", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

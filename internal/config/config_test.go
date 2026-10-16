@@ -84,3 +84,26 @@ func TestRenderingConfigurationLimits(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestSitemapAndWarmingLimits(t *testing.T) {
+	for _, change := range []func(*Config){
+		func(c *Config) { c.SitemapURLs = nil }, func(c *Config) { c.SitemapURLs = []string{"https://foreign.example/sitemap.xml"} },
+		func(c *Config) { c.WarmQueueSize = 0 }, func(c *Config) { c.SitemapMaxURLs = 0 }, func(c *Config) { c.SitemapMaxDocuments = 0 }, func(c *Config) { c.SitemapMaxDepth = -1 },
+		func(c *Config) { c.SitemapMaxBytes = 65 << 20 }, func(c *Config) { c.SitemapScanTimeout = "0s" }, func(c *Config) { c.WarmInterval = "invalid" },
+		func(c *Config) { c.WarmRetryBase = "10s"; c.WarmRetryMax = "5s" },
+	} {
+		c := Default()
+		c.Origin = "https://public.example"
+		change(&c)
+		if c.Validate() == nil {
+			t.Fatal("invalid sitemap/warming configuration accepted")
+		}
+	}
+	c := Default()
+	c.Origin = "http://127.0.0.1:8081"
+	c.PublicURL = "https://public.example"
+	c.SitemapURLs = []string{"https://public.example/sitemap.xml"}
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}

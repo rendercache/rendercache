@@ -27,5 +27,20 @@
   "max_html_bytes": 8388608,
   "render_concurrency": 1,
   "render_allow_origins": [],
-  "chrome_no_sandbox": false
+  "chrome_no_sandbox": false,
+  "warm_enabled": true,
+  "sitemap_urls": [
+    "/sitemap.xml"
+  ],
+  "warm_interval": "24h",
+  "sitemap_interval": "15m",
+  "warm_retry_base": "5s",
+  "warm_retry_max": "5m",
+  "warm_queue_size": 128,
+  "sitemap_max_bytes": 8388608,
+  "sitemap_max_urls": 10000,
+  "sitemap_max_documents": 128,
+  "sitemap_max_depth": 4,
+  "sitemap_timeout": "15s",
+  "sitemap_scan_timeout": "2m"
 }

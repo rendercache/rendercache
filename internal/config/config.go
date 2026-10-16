@@ -17,29 +17,53 @@ import (
 
 // Config is the on-disk JSON configuration. CLI flags override these values.
 type Config struct {
-	Origin             string   `json:"origin"`
-	PublicURL          string   `json:"public_url"`
-	DataDir            string   `json:"data_dir"`
-	ChromePath         string   `json:"chrome_path"`
-	ChromeNoSandbox    bool     `json:"chrome_no_sandbox"`
-	RenderTimeout      string   `json:"render_timeout"`
-	RenderSettle       string   `json:"render_settle"`
-	ReadySelector      string   `json:"ready_selector"`
-	MaxHTMLBytes       int64    `json:"max_html_bytes"`
-	RenderConcurrency  int      `json:"render_concurrency"`
-	RenderAllowOrigins []string `json:"render_allow_origins"`
-	Listen             string   `json:"listen"`
-	AdminListen        string   `json:"admin_listen"`
-	AdminToken         string   `json:"admin_token,omitempty"`
-	Bots               []string `json:"bots"`
-	OriginTimeout      string   `json:"origin_timeout"`
-	ShutdownTimeout    string   `json:"shutdown_timeout"`
+	Origin              string   `json:"origin"`
+	WarmEnabled         bool     `json:"warm_enabled"`
+	SitemapURLs         []string `json:"sitemap_urls"`
+	WarmInterval        string   `json:"warm_interval"`
+	SitemapInterval     string   `json:"sitemap_interval"`
+	WarmRetryBase       string   `json:"warm_retry_base"`
+	WarmRetryMax        string   `json:"warm_retry_max"`
+	WarmQueueSize       int      `json:"warm_queue_size"`
+	SitemapMaxBytes     int64    `json:"sitemap_max_bytes"`
+	SitemapMaxURLs      int      `json:"sitemap_max_urls"`
+	SitemapMaxDocuments int      `json:"sitemap_max_documents"`
+	SitemapMaxDepth     int      `json:"sitemap_max_depth"`
+	SitemapTimeout      string   `json:"sitemap_timeout"`
+	SitemapScanTimeout  string   `json:"sitemap_scan_timeout"`
+	PublicURL           string   `json:"public_url"`
+	DataDir             string   `json:"data_dir"`
+	ChromePath          string   `json:"chrome_path"`
+	ChromeNoSandbox     bool     `json:"chrome_no_sandbox"`
+	RenderTimeout       string   `json:"render_timeout"`
+	RenderSettle        string   `json:"render_settle"`
+	ReadySelector       string   `json:"ready_selector"`
+	MaxHTMLBytes        int64    `json:"max_html_bytes"`
+	RenderConcurrency   int      `json:"render_concurrency"`
+	RenderAllowOrigins  []string `json:"render_allow_origins"`
+	Listen              string   `json:"listen"`
+	AdminListen         string   `json:"admin_listen"`
+	AdminToken          string   `json:"admin_token,omitempty"`
+	Bots                []string `json:"bots"`
+	OriginTimeout       string   `json:"origin_timeout"`
+	ShutdownTimeout     string   `json:"shutdown_timeout"`
 }
 
 func Default() Config {
-	return Config{DataDir: "data/snapshots", RenderTimeout: "30s", RenderSettle: "500ms", MaxHTMLBytes: 8 << 20, RenderConcurrency: 1, Listen: ":8080", AdminListen: "127.0.0.1:9090", OriginTimeout: "30s", ShutdownTimeout: "10s", Bots: []string{
-		"Googlebot", "bingbot", "DuckDuckBot", "OAI-SearchBot", "GPTBot", "ChatGPT-User", "ClaudeBot", "Claude-SearchBot", "Claude-User", "PerplexityBot", "Perplexity-User", "Meta-ExternalAgent", "Bytespider", "Applebot", "facebookexternalhit", "Twitterbot", "LinkedInBot", "Slackbot", "Discordbot",
-	}}
+	return Config{
+		Origin: "", PublicURL: "", Listen: ":8080", AdminListen: "127.0.0.1:9090",
+		OriginTimeout: "30s", ShutdownTimeout: "10s",
+		DataDir: "data/snapshots", RenderTimeout: "30s", RenderSettle: "500ms", MaxHTMLBytes: 8 << 20, RenderConcurrency: 1,
+		WarmEnabled: true, SitemapURLs: []string{"/sitemap.xml"}, WarmInterval: "24h", SitemapInterval: "15m",
+		WarmRetryBase: "5s", WarmRetryMax: "5m", WarmQueueSize: 128,
+		SitemapMaxBytes: 8 << 20, SitemapMaxURLs: 10000, SitemapMaxDocuments: 128, SitemapMaxDepth: 4,
+		SitemapTimeout: "15s", SitemapScanTimeout: "2m",
+		Bots: []string{
+			"Googlebot", "bingbot", "DuckDuckBot", "OAI-SearchBot", "GPTBot", "ChatGPT-User",
+			"ClaudeBot", "Claude-SearchBot", "Claude-User", "PerplexityBot", "Perplexity-User",
+			"Meta-ExternalAgent", "Bytespider", "Applebot", "facebookexternalhit", "Twitterbot", "LinkedInBot", "Slackbot", "Discordbot",
+		},
+	}
 }
 
 func Load(path string) (Config, error) {
@@ -118,6 +142,34 @@ func (c Config) Validate() error {
 	settle, err := time.ParseDuration(c.RenderSettle)
 	if err != nil || settle < 0 {
 		return errors.New("render_settle must be nonnegative")
+	}
+
+	if c.WarmQueueSize < 1 || c.WarmQueueSize > 10000 || c.SitemapMaxBytes < 1 || c.SitemapMaxBytes > 64<<20 || c.SitemapMaxURLs < 1 || c.SitemapMaxURLs > 100000 || c.SitemapMaxDocuments < 1 || c.SitemapMaxDocuments > 1000 || c.SitemapMaxDepth < 0 || c.SitemapMaxDepth > 16 || len(c.SitemapURLs) == 0 {
+		return errors.New("invalid warming/sitemap limits")
+	}
+	for _, raw := range c.SitemapURLs {
+		if _, err := target.Map(c.SiteURL(), c.Origin, raw); err != nil {
+			return fmt.Errorf("sitemap_urls: %w", err)
+		}
+	}
+	for _, value := range []string{c.WarmInterval, c.SitemapInterval, c.SitemapTimeout, c.SitemapScanTimeout, c.WarmRetryBase, c.WarmRetryMax} {
+		d, err := time.ParseDuration(value)
+		if err != nil || d <= 0 {
+			return fmt.Errorf("invalid warming duration %q", value)
+		}
+	}
+	warmInterval, _ := time.ParseDuration(c.WarmInterval)
+	sitemapInterval, _ := time.ParseDuration(c.SitemapInterval)
+	if warmInterval < time.Second || sitemapInterval < time.Second {
+		return errors.New("warming/discovery intervals must be at least 1s")
+	}
+	retryBase, _ := time.ParseDuration(c.WarmRetryBase)
+	retryMax, _ := time.ParseDuration(c.WarmRetryMax)
+	if retryBase < 100*time.Millisecond {
+		return errors.New("warm_retry_base must be at least 100ms")
+	}
+	if retryMax < retryBase {
+		return errors.New("warm_retry_max must not be less than warm_retry_base")
 	}
 
 	if _, err := c.OriginURL(); err != nil {
