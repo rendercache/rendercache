@@ -1,13 +1,13 @@
 # RenderCache — resume instructions
 
-Updated: 2026-10-16. Current checkpoint: session 6 complete, verified and published as v0.1.0-alpha.1. PAUSED. Next session is website work only upon user command. Do not start it automatically.
+Updated: 2026-10-16. Current checkpoint: engine sessions 1–6 complete and v0.1.0-alpha.1 published; session 7 website source published. PAUSED. Resume only upon user command.
 
 ## Authorization and repositories
 
-Work in approximately 2–3 hour scoped sessions. Finish a runnable checkpoint, verify, update this file, commit/push, report and pause. Do not silently begin another session. Do not claim elapsed hours not spent. The user's latest “Go” authorized session 6. The earlier request to check access repaired the GitHub blocker during session 2.
+Work in approximately 2–3 hour scoped sessions. Finish a runnable checkpoint, verify, update this file, commit/push, report and pause. Do not silently begin another session. Do not claim elapsed hours not spent. The user's latest “Go” authorized session 7 (website). The earlier request to check access repaired the GitHub blocker during session 2.
 
 Engine: https://github.com/rendercache/rendercache, public, Apache 2.0.
-Website: https://github.com/photozeitgeist/rendercache.com, private, existing Hugo site. Access read confirmed. Domain: RenderCache.com; user will connect it later. No website/domain changes made. Inspect website instructions/template before changing it, and do not apply engine-license statements to that private site.
+Website: https://github.com/photozeitgeist/rendercache.com, private, existing Hugo site. Access read confirmed. Domain: RenderCache.com; user will connect it later. Website source was implemented in session 7; domain/hosting unchanged. Read its AGENTS.md and RESUME.md before further work, and do not apply engine-license statements to that private site.
 
 GitHub publication blocker is resolved. The rendercache organization now has an app installation, a real README write succeeded and session 1 was published at 742ba833ea800d5fec8047f9978e4d5d2606b606. The old source archive is a historical fallback, not the current source of truth. Fetch main before continuing and preserve any intervening user changes.
 
@@ -89,7 +89,7 @@ Verified published release: https://github.com/rendercache/rendercache/releases/
 
 Fetch main and inspect the final release workflow/tag/assets. If a release gate failed or publication is missing, finish that checkpoint first. Preserve intervening user changes. Engine sessions 1–6 are complete; do not silently expand into hosted infrastructure, a stable v1, other OS support, Lightpanda, BareProxy or billing. Remaining runtime caveats are documented in README/docs/deployment.md: approximate shell checks, direct-origin location.host, unsupported iframe/shadow flattening, best-effort receipts, bounded cold fallback to raw origin, in-memory queue state and host-specific Chrome sandbox/resource requirements.
 
-The next authorized project work is the separate website at https://github.com/photozeitgeist/rendercache.com. It is an existing private Hugo template; read its instructions and inspect the current template/content before edits. Build the RenderCache project site around the actual engine and verified alpha release, keeping website licensing claims separate from the Apache engine. A static Hugo site cannot host an arbitrary live render backend; do not invent a working live paste-URL service without a deployed backend. Use honest sample/illustration labels for static demonstrations. Domain RenderCache.com will be connected by the user later; do not change DNS, hosting or domain configuration. Update resume instructions in the relevant repo, verify/build, publish the checkpoint, report and pause again.
+Session 7 website checkpoint: https://github.com/photozeitgeist/rendercache.com/commit/8bc7337f9f69b3ae64eed6675f510dd498669213. Existing Hugo Launch theme retained byte-for-byte; copied content replaced with RenderCache homepage, comparison demo, quickstart, downloads, deployment, FAQ, roadmap and explanatory articles. The static demo bundles a real capture from the released executable/public fixture (raw text 0 words; rendered 15), with hashes/provenance; receipt controls are explicitly simulated and perform no requests. No arbitrary live rendering endpoint was invented. Local strict Hugo build, 5 Node model/DOM tests and 24-page link/capture/theme checks passed. Visual browser QA remains outstanding because required managed browser tooling was unavailable. Website CI run: https://github.com/photozeitgeist/rendercache.com/actions/runs/38926451844; confirm conclusion before further work. The website's own RESUME.md is the detailed continuation source. Domain RenderCache.com remains for the user to connect later; no DNS, hosting, Worker or backend deployment was performed. On next Go inspect remote changes/CI first, then prioritize supported desktop/mobile visual review or concrete owner-requested integration. Do not silently start a new engine feature batch.
 
 ## Reproduction
 
