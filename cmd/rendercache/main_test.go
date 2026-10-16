@@ -328,3 +328,14 @@ func TestLifecycleLoggingCannotHoldShutdown(t *testing.T) {
 		t.Fatal(err, time.Since(started))
 	}
 }
+
+func TestInspectDoesNotCreateMissingDataDirectory(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "missing")
+	err := run(context.Background(), []string{"inspect", "--origin", "https://app.example", "--data-dir", dir, "--url", "/"}, io.Discard, io.Discard)
+	if err == nil {
+		t.Fatal("missing store accepted")
+	}
+	if _, err = os.Stat(dir); !os.IsNotExist(err) {
+		t.Fatal("inspect created data directory", err)
+	}
+}

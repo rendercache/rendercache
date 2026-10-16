@@ -3,6 +3,7 @@ package render
 
 import (
 	"context"
+	"golang.org/x/net/netutil"
 	"io"
 	"net"
 	"net/http"
@@ -42,11 +43,16 @@ func startGuard(ctx context.Context, origins []string) (*egressGuard, error) {
 	if err != nil {
 		return nil, err
 	}
+	ln = netutil.LimitListener(ln, 64)
 	g.address = ln.Addr().String()
 	g.transport = http.DefaultTransport.(*http.Transport).Clone()
 	g.transport.Proxy = nil
 	g.transport.ResponseHeaderTimeout = 15 * time.Second
-	g.server = &http.Server{Handler: g, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 10 * time.Second, BaseContext: func(net.Listener) context.Context { return ctx }}
+	g.transport.MaxResponseHeaderBytes = 64 << 10
+	g.transport.MaxConnsPerHost = 16
+	g.transport.MaxIdleConns = 64
+	g.transport.MaxIdleConnsPerHost = 8
+	g.server = &http.Server{Handler: g, MaxHeaderBytes: 64 << 10, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 10 * time.Second, BaseContext: func(net.Listener) context.Context { return ctx }}
 	go g.server.Serve(ln)
 	return g, nil
 }

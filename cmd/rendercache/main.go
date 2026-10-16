@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"github.com/rendercache/rendercache/internal/localfs"
+	"golang.org/x/net/netutil"
 	"io"
 	"log/slog"
 	"net"
@@ -172,7 +173,11 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) error {
 		if err != nil {
 			return err
 		}
-		store, err := snapshot.OpenWithLimits(c.DataDir, c.MaxHTMLBytes, snapshot.Limits{MaxBytes: c.SnapshotMaxBytes, MaxFiles: c.SnapshotMaxFiles})
+		openStore := snapshot.OpenWithLimits
+		if args[0] == "inspect" {
+			openStore = snapshot.OpenExisting
+		}
+		store, err := openStore(c.DataDir, c.MaxHTMLBytes, snapshot.Limits{MaxBytes: c.SnapshotMaxBytes, MaxFiles: c.SnapshotMaxFiles})
 		if err != nil {
 			return err
 		}
@@ -221,11 +226,13 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("public listener: %w", err)
 	}
+	publicLn = netutil.LimitListener(publicLn, 256)
 	defer publicLn.Close()
 	adminLn, err := net.Listen("tcp", c.AdminListen)
 	if err != nil {
 		return fmt.Errorf("admin listener: %w", err)
 	}
+	adminLn = netutil.LimitListener(adminLn, 16)
 	defer adminLn.Close()
 
 	var store *snapshot.Store

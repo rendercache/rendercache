@@ -149,7 +149,7 @@ func (c Config) Validate() error {
 	if c.SnapshotMaxBytes < 4096 || c.SnapshotMaxBytes > 1<<40 || c.SnapshotMaxFiles < 1 || c.SnapshotMaxFiles > 100000 {
 		return errors.New("invalid snapshot quota (4096..1TiB bytes, 1..100000 files)")
 	}
-	if c.MaxRequestBytes < 1 || c.MaxRequestBytes > 256<<20 || c.HTTPConcurrency < 1 || c.HTTPConcurrency > 4096 {
+	if c.MaxRequestBytes < 1 || c.MaxRequestBytes > 256<<20 || c.HTTPConcurrency < 1 || c.HTTPConcurrency > 256 {
 		return errors.New("invalid HTTP limits")
 	}
 	if c.DeliveryLogMaxBytes < 4096 || c.DeliveryLogMaxBytes > 1<<30 || c.DeliveryLogBackups < 1 || c.DeliveryLogBackups > 10 {

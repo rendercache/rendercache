@@ -15,9 +15,10 @@ with archive.open("wb") as raw:
         with tarfile.open(fileobj=compressed, mode="w") as tar:
             for source, name in [(output / "rendercache", "rendercache"),
                                  (pathlib.Path("LICENSE"), "LICENSE"),
+                                 (pathlib.Path("THIRD_PARTY_NOTICES"), "THIRD_PARTY_NOTICES"),
                                  (pathlib.Path("README.md"), "README.md"),
                                  (pathlib.Path("rendercache.example.json"), "rendercache.example.json"),
-                                 (pathlib.Path("docs/deployment.md"), "deployment.md")]:
+                                 (pathlib.Path("docs/deployment.md"), "docs/deployment.md")]:
                 data = source.read_bytes()
                 item = tarfile.TarInfo(name)
                 item.size = len(data)

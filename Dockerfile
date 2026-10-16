@@ -16,6 +16,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends chromium chromi
     && mkdir -p /data && chown rendercache:rendercache /data
 COPY --from=build /out/rendercache /usr/local/bin/rendercache
 COPY deploy/container.json /etc/rendercache.json
+COPY LICENSE THIRD_PARTY_NOTICES /usr/share/doc/rendercache/
 USER 10001:10001
 ENV HOME=/tmp
 WORKDIR /data

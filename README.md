@@ -120,7 +120,7 @@ The endpoint accepts exactly one public URL (or root-relative path) and returns 
 | `snapshot_max_bytes` | `1073741824` | Serialized-record quota; 4096 bytes to 1 TiB |
 | `snapshot_max_files` | `10000` | Record count quota; 1 to 100000 |
 | `max_request_bytes` | `16777216` | Public request-body limit; 1 byte to 256 MiB |
-| `http_concurrency` | `32` | Concurrent public requests; excess requests return 503 |
+| `http_concurrency` | `32` | Concurrent public requests (1..256); excess requests return 503 |
 | `edge_token` | empty | Optional public-listener edge key; prefer environment |
 | `delivery_log_max_bytes` | `10485760` | Maximum bytes per log file; 4096 to 1 GiB |
 | `delivery_log_backups` | `3` | Rotated files retained in addition to current file; 1 to 10 |
@@ -159,7 +159,7 @@ Every admin route requires `Authorization: Bearer <token>` or HTTP Basic authent
 
 Only GET/HEAD document requests without cookies or authorization are eligible for the snapshot path. API paths, non-HTML file extensions, non-HTML Accept headers, range/upgrade requests and `Cache-Control: no-store` bypass it. A user-agent match is a crawler claim, not an authenticated identity. Every upstream response varies on User-Agent, Cookie and Authorization; upstream cookies, status codes and content are preserved. Incoming forwarding claims are removed before fresh forwarding headers are generated. Keep TLS and any trusted edge routing in front of this HTTP service.
 
-Crawler delivery receipts are written as rotating JSON lines under `data_dir/delivery/crawler.jsonl`; see the diagnostics section below. Stderr carries process lifecycle/error messages with bounded waits. The proxy has a total `origin_timeout` deadline (including streaming and upgrades), bounded origin connections/headers, public request body limits and a concurrency gate. Oversized known bodies return 413; streamed overflow can abort a request or return a gateway error depending on when detected. Slow uploads are subject to server read deadlines. Use cgroup/container limits for browser RSS, processes and temporary disk. See deployment guide before enabling external routing. Sitemap warming is proactive; eligible misses/stale requests can also request bounded background work. Manual `render` always performs new browser work. Bots' query strings are forwarded unchanged, but query strings are omitted from diagnostic logs.
+Crawler delivery receipts are written as rotating JSON lines under `data_dir/delivery/crawler.jsonl`; see the diagnostics section below. Stderr carries process lifecycle/error messages with bounded waits. The proxy has a total `origin_timeout` deadline (including streaming and upgrades), bounded origin connections/headers, 256/16 public/admin listener connections, public request body limits and a concurrency gate. Oversized known bodies return 413; streamed overflow can abort a request or return a gateway error depending on when detected. Slow uploads are subject to server read deadlines. Use cgroup/container limits for browser RSS, processes and temporary disk. See deployment guide before enabling external routing. Sitemap warming is proactive; eligible misses/stale requests can also request bounded background work. Manual `render` always performs new browser work. Bots' query strings are forwarded unchanged, but query strings are omitted from diagnostic logs.
 
 ## What the bot sees
 

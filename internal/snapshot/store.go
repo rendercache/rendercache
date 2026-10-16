@@ -64,11 +64,21 @@ func Open(dir string, maxHTML int64) (*Store, error) {
 	return OpenWithLimits(dir, maxHTML, DefaultLimits)
 }
 func OpenWithLimits(dir string, maxHTML int64, limits Limits) (*Store, error) {
+	return openStore(dir, maxHTML, limits, true)
+}
+
+// OpenExisting never creates a missing directory; used by the read-only inspect command.
+func OpenExisting(dir string, maxHTML int64, limits Limits) (*Store, error) {
+	return openStore(dir, maxHTML, limits, false)
+}
+func openStore(dir string, maxHTML int64, limits Limits, create bool) (*Store, error) {
 	if dir == "" || maxHTML <= 0 || maxHTML > 64<<20 || limits.MaxBytes < 4096 || limits.MaxBytes > 1<<40 || limits.MaxFiles < 1 || limits.MaxFiles > 100000 {
 		return nil, errors.New("invalid snapshot store limits")
 	}
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		return nil, err
+	if create {
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			return nil, err
+		}
 	}
 	root, err := os.OpenRoot(dir)
 	if err != nil {
@@ -144,7 +154,7 @@ func (s *Store) Save(p target.Page, result render.Result) (Record, error) {
 		return Record{}, err
 	}
 	if int64(len(result.HTML)) > s.maxHTML {
-		return Record{}, errors.New("only nonempty, successful HTML within size limit can be saved")
+		return Record{}, errors.New("snapshot HTML exceeds size limit")
 	}
 	record := Record{Version: 1, Key: p.Key(), Page: p, CreatedAt: time.Now().UTC(), ContentHash: hash(result.HTML), Result: result}
 

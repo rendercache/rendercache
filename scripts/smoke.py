@@ -71,7 +71,7 @@ with tempfile.TemporaryDirectory() as tmp:
     admin_url = f'http://127.0.0.1:{admin_port}'
     config = {'origin': origin_url, 'public_url': 'https://app.example.com',
               'listen': f'127.0.0.1:{public_port}', 'admin_listen': f'127.0.0.1:{admin_port}',
-              'data_dir': str(folder/'data'), 'warm_enabled': False, 'admin_token': 'smoke-token'}
+              'data_dir': str(folder/'data'), 'warm_enabled': False, 'admin_token': 'smoke-token', 'render_timeout': '15s'}
     if args.chrome:
         config.update(chrome_path=args.chrome, chrome_no_sandbox=os.getenv('RENDERCACHE_TEST_NO_SANDBOX') == '1', ready_selector='#ready')
     config_path = folder/'config.json'
@@ -80,7 +80,7 @@ with tempfile.TemporaryDirectory() as tmp:
     env = {**os.environ, 'RENDERCACHE_ADMIN_TOKEN': 'smoke-token'}
     try:
         if args.chrome:
-            subprocess.run([binary, 'render', '--config', str(config_path), '--url', '/'], check=True, stdout=subprocess.DEVNULL, env=env, timeout=30)
+            subprocess.run([binary, 'render', '--config', str(config_path), '--url', '/'], check=True, stdout=subprocess.DEVNULL, env=env, timeout=35)
         with (folder/'stderr').open('w') as log:
             process = subprocess.Popen([binary, 'serve', '--config', str(config_path)], stderr=log, stdout=subprocess.DEVNULL, env=env)
         for _ in range(100):
