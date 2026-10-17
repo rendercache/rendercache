@@ -10,8 +10,10 @@ import (
 	"log"
 	"log/slog"
 	"mime"
+	"net"
 	"net/http"
 	"net/http/httputil"
+	"net/netip"
 	"path"
 	"strconv"
 	"strings"
@@ -31,9 +33,17 @@ type Route struct {
 	Reason  string
 }
 
-// Classify only admits public document requests to the snapshot path.
-// User agents are claims, not verified crawler identities.
+var defaultBypassPaths = []string{"/api"}
+
+// Classify applies the default bypass paths. See ClassifyPaths.
 func Classify(r *http.Request, bots []string) Route {
+	return ClassifyPaths(r, bots, defaultBypassPaths)
+}
+
+// ClassifyPaths only admits public document requests to the snapshot path.
+// User agents are claims, not verified crawler identities. Requests under a
+// bypass path prefix (for example /api or /graphql) always go to the origin.
+func ClassifyPaths(r *http.Request, bots, bypassPaths []string) Route {
 	bypass := func(reason string) Route { return Route{Outcome: "BYPASS", Reason: reason} }
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		return bypass("method")
@@ -53,8 +63,10 @@ func Classify(r *http.Request, bots []string) Route {
 	if strings.Contains(strings.ToLower(r.Header.Get("Cache-Control")), "no-store") {
 		return bypass("no-store")
 	}
-	if r.URL.Path == "/api" || strings.HasPrefix(r.URL.Path, "/api/") {
-		return bypass("api")
+	for _, prefix := range bypassPaths {
+		if underPrefix(r.URL.Path, prefix) {
+			return bypass("api")
+		}
 	}
 	ext := strings.ToLower(path.Ext(r.URL.Path))
 	if ext != "" && ext != ".html" && ext != ".htm" {
@@ -71,6 +83,18 @@ func Classify(r *http.Request, bots []string) Route {
 		}
 	}
 	return bypass("human")
+}
+
+func underPrefix(p, prefix string) bool {
+	prefix = strings.TrimSuffix(prefix, "/")
+	return prefix != "" && (p == prefix || strings.HasPrefix(p, prefix+"/"))
+}
+
+// variesByClient reports whether the same URL can produce different responses
+// for crawlers and visitors. Assets and bypassed API paths never take the
+// snapshot path, so they do not need Vary headers that fragment shared caches.
+func variesByClient(route Route) bool {
+	return route.Reason != "asset" && route.Reason != "api"
 }
 
 func acceptsHTML(value string) bool {
@@ -108,6 +132,10 @@ type Gateway struct {
 	requests    atomic.Uint64
 	misses      atomic.Uint64
 	transport   *http.Transport
+	ttl         time.Duration
+	timeout     time.Duration
+	trusted     []netip.Prefix
+	ignored     map[string]bool
 }
 
 func New(c config.Config, logger *slog.Logger) (*Gateway, error) {
@@ -119,19 +147,43 @@ func New(c config.Config, logger *slog.Logger) (*Gateway, error) {
 		logger = slog.Default()
 	}
 	timeout, _ := time.ParseDuration(c.OriginTimeout)
+	ttl, _ := time.ParseDuration(c.SnapshotTTL)
+	trusted, _ := c.TrustedPrefixes()
+	ignored := make(map[string]bool, len(c.IgnoreQueryParams))
+	for _, name := range c.IgnoreQueryParams {
+		ignored[strings.ToLower(name)] = true
+	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.ResponseHeaderTimeout = timeout
 	transport.MaxResponseHeaderBytes = 64 << 10
 	transport.MaxConnsPerHost = 64
 	transport.MaxIdleConnsPerHost = 8
 	transport.IdleConnTimeout = 60 * time.Second
-	g := &Gateway{admission: make(chan struct{}, c.HTTPConcurrency), diagnostics: make(chan struct{}, 2), cfg: c, logger: logger, started: time.Now(), transport: transport}
+	g := &Gateway{admission: make(chan struct{}, c.HTTPConcurrency), diagnostics: make(chan struct{}, 2), cfg: c, logger: logger, started: time.Now(), transport: transport, ttl: ttl, timeout: timeout, trusted: trusted, ignored: ignored}
 	g.proxy = &httputil.ReverseProxy{
 		Transport: transport,
 		ErrorLog:  log.New(io.Discard, "", 0),
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			pr.SetURL(origin)
+			// Rewrite starts without any inbound X-Forwarded-* headers. Keep the
+			// client chain and scheme only when the immediate peer is a trusted
+			// edge; otherwise the origin sees this hop as plain HTTP from the edge
+			// and HTTPS-enforcing apps redirect crawlers back to the same URL.
+			trusted := g.trustedPeer(pr.In)
+			if trusted {
+				if chain := pr.In.Header.Values("X-Forwarded-For"); len(chain) > 0 {
+					pr.Out.Header["X-Forwarded-For"] = append([]string(nil), chain...)
+				}
+			}
 			pr.SetXForwarded()
+			if trusted {
+				if proto := forwardedProto(pr.In.Header.Get("X-Forwarded-Proto")); proto != "" {
+					pr.Out.Header.Set("X-Forwarded-Proto", proto)
+				}
+				if host := pr.In.Header.Get("X-Forwarded-Host"); validForwardedHost(host) {
+					pr.Out.Header.Set("X-Forwarded-Host", host)
+				}
+			}
 			// Never allow an upstream or downstream cache to confuse bot and human responses.
 			pr.Out.Header.Del("X-RenderCache")
 			pr.Out.Header.Del("X-RenderCache-Edge-Key")
@@ -139,14 +191,18 @@ func New(c config.Config, logger *slog.Logger) (*Gateway, error) {
 		ModifyResponse: func(resp *http.Response) error {
 			route, _ := resp.Request.Context().Value(routeKey{}).(Route)
 			resp.Header.Set("X-RenderCache", route.Outcome)
-			resp.Header.Add("Vary", "User-Agent, Cookie, Authorization, Accept")
+			if variesByClient(route) {
+				resp.Header.Add("Vary", "User-Agent, Cookie, Authorization, Accept")
+			}
 
 			return nil
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
 			route, _ := r.Context().Value(routeKey{}).(Route)
 			w.Header().Set("X-RenderCache", route.Outcome)
-			w.Header().Add("Vary", "User-Agent, Cookie, Authorization, Accept")
+			if variesByClient(route) {
+				w.Header().Add("Vary", "User-Agent, Cookie, Authorization, Accept")
+			}
 			var limit *http.MaxBytesError
 			if errors.As(err, &limit) {
 				http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
@@ -159,7 +215,7 @@ func New(c config.Config, logger *slog.Logger) (*Gateway, error) {
 }
 
 func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	route := Classify(r, g.cfg.Bots)
+	route := g.classify(r)
 	w, finish := g.observe(w, r, route)
 	defer finish()
 	g.requests.Add(1)
@@ -189,11 +245,52 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		g.misses.Add(1)
 	}
 	// Ignore untrusted diagnostic headers; the decision comes only from classification.
-	timeout, _ := time.ParseDuration(g.cfg.OriginTimeout)
-	bounded, cancel := context.WithTimeout(r.Context(), timeout)
+	bounded, cancel := context.WithTimeout(r.Context(), g.timeout)
 	defer cancel()
 	ctx := context.WithValue(bounded, routeKey{}, route)
 	g.proxy.ServeHTTP(w, r.WithContext(ctx))
+}
+
+func (g *Gateway) classify(r *http.Request) Route {
+	return ClassifyPaths(r, g.cfg.Bots, g.cfg.BypassPaths)
+}
+
+// trustedPeer reports whether forwarding headers from this request's immediate
+// peer may be passed on. A matching edge token proves the request came through
+// the configured edge; otherwise the peer address must be in trusted_proxies.
+func (g *Gateway) trustedPeer(r *http.Request) bool {
+	if g.cfg.EdgeToken != "" {
+		return true // ServeHTTP has already rejected requests without the token.
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	addr, err := netip.ParseAddr(host)
+	if err != nil {
+		return false
+	}
+	addr = addr.Unmap()
+	for _, prefix := range g.trusted {
+		if prefix.Contains(addr) {
+			return true
+		}
+	}
+	return false
+}
+
+// forwardedProto accepts only the first value and only http or https.
+func forwardedProto(value string) string {
+	first, _, _ := strings.Cut(value, ",")
+	switch proto := strings.ToLower(strings.TrimSpace(first)); proto {
+	case "http", "https":
+		return proto
+	}
+	return ""
+}
+
+func validForwardedHost(host string) bool {
+	return host != "" && len(host) <= 255 && !strings.ContainsAny(host, " ,/\\@?#\t")
 }
 
 // SetWarmer must be called before starting the HTTP listeners.

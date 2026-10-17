@@ -6,6 +6,7 @@
   "shutdown_timeout": "10s",
   "bots": [
     "Googlebot",
+    "Google-InspectionTool",
     "bingbot",
     "OAI-SearchBot",
     "GPTBot",
@@ -51,5 +52,22 @@
   "snapshot_max_bytes": 1073741824,
   "snapshot_max_files": 10000,
   "max_request_bytes": 16777216,
-  "http_concurrency": 32
+  "http_concurrency": 32,
+  "bypass_paths": [
+    "/api"
+  ],
+  "ignore_query_params": [
+    "utm_source",
+    "utm_medium",
+    "utm_campaign",
+    "utm_term",
+    "utm_content",
+    "gclid",
+    "fbclid",
+    "msclkid"
+  ],
+  "trusted_proxies": [
+    "127.0.0.0/8",
+    "::1/128"
+  ]
 }

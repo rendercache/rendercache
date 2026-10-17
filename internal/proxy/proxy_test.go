@@ -199,3 +199,78 @@ func TestProxyPreservesPrivateWrite(t *testing.T) {
 		t.Fatal(w.Code, w.Header())
 	}
 }
+
+func TestTrustedEdgeForwardingHeaders(t *testing.T) {
+	calls := make(chan *http.Request, 8)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls <- r.Clone(context.Background())
+		io.WriteString(w, "ok")
+	}))
+	defer upstream.Close()
+	send := func(g *Gateway, remote string, headers map[string]string) *http.Request {
+		r := httptest.NewRequest("GET", "http://public.test/page", nil)
+		r.RemoteAddr = remote
+		r.Header.Set("User-Agent", "GPTBot")
+		for k, v := range headers {
+			r.Header.Set(k, v)
+		}
+		g.ServeHTTP(httptest.NewRecorder(), r)
+		return <-calls
+	}
+	edge := map[string]string{"X-Forwarded-For": "203.0.113.9", "X-Forwarded-Proto": "https", "X-Forwarded-Host": "www.example.com"}
+	g := gateway(t, upstream.URL)
+
+	// A loopback edge (the nginx example) keeps the visitor chain and scheme.
+	got := send(g, "127.0.0.1:41000", edge)
+	if got.Header.Get("X-Forwarded-For") != "203.0.113.9, 127.0.0.1" || got.Header.Get("X-Forwarded-Proto") != "https" || got.Header.Get("X-Forwarded-Host") != "www.example.com" {
+		t.Fatal("trusted edge headers lost:", got.Header)
+	}
+	// An untrusted peer cannot claim a scheme, host or client chain.
+	got = send(g, "198.51.100.4:41000", edge)
+	if got.Header.Get("X-Forwarded-For") != "198.51.100.4" || got.Header.Get("X-Forwarded-Proto") != "http" || got.Header.Get("X-Forwarded-Host") != "public.test" {
+		t.Fatal("untrusted forwarding accepted:", got.Header)
+	}
+	// Only http/https and plain host values pass, even from a trusted edge.
+	got = send(g, "[::1]:41000", map[string]string{"X-Forwarded-Proto": "javascript", "X-Forwarded-Host": "a.example, b.example"})
+	if got.Header.Get("X-Forwarded-Proto") != "http" || got.Header.Get("X-Forwarded-Host") != "public.test" {
+		t.Fatal("invalid forwarding values accepted:", got.Header)
+	}
+
+	// With an edge token, the token is what proves the request came from the edge.
+	c := config.Default()
+	c.Origin = upstream.URL
+	c.EdgeToken = "edge-secret"
+	c.TrustedProxies = []string{}
+	tokened, err := New(c, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tokened.Close()
+	headers := map[string]string{"X-RenderCache-Edge-Key": "edge-secret"}
+	for k, v := range edge {
+		headers[k] = v
+	}
+	got = send(tokened, "198.51.100.4:41000", headers)
+	if got.Header.Get("X-Forwarded-Proto") != "https" || !strings.HasPrefix(got.Header.Get("X-Forwarded-For"), "203.0.113.9") || got.Header.Get("X-RenderCache-Edge-Key") != "" {
+		t.Fatal("edge-token forwarding failed:", got.Header)
+	}
+}
+
+func TestBypassPathsAndAssetVary(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "ok") }))
+	defer upstream.Close()
+	g := gateway(t, upstream.URL)
+	g.cfg.BypassPaths = []string{"/api", "/graphql", "/wp-json/"}
+	for path, want := range map[string]string{"/graphql": "api", "/graphql/v2": "api", "/wp-json/wp/v2": "api", "/graphqlish": "human", "/api": "api", "/app.js": "asset", "/about": "human"} {
+		r := httptest.NewRequest("GET", "http://public.test"+path, nil)
+		if got := g.classify(r).Reason; got != want {
+			t.Errorf("%s: got %s, want %s", path, got, want)
+		}
+		w := httptest.NewRecorder()
+		g.ServeHTTP(w, r)
+		hasVary := strings.Contains(strings.Join(w.Header().Values("Vary"), ","), "User-Agent")
+		if hasVary != (want == "human") {
+			t.Errorf("%s: Vary present=%v", path, hasVary)
+		}
+	}
+}

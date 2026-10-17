@@ -1,6 +1,6 @@
 # RenderCache — resume instructions
 
-Updated: 2026-10-16. Current checkpoint: engine sessions 1–6 complete and v0.1.0-alpha.1 published; session 7 website source published. PAUSED. Resume only upon user command.
+Updated: 2026-10-17. Current checkpoint: engine sessions 1–6 complete and v0.1.0-alpha.1 published; session 7 website source published; session 8 review fixes committed (see below). PAUSED. Resume only upon user command.
 
 ## Authorization and repositories
 
@@ -84,6 +84,21 @@ Implementation CI at b2744a20c86db147db351e59ba3a7a95b6161b97 passed Go/Chrome r
 Release: VERSION is 0.1.0-alpha.1. CI/release toolchain is Go 1.27.2; source minimum remains Go 1.26. `bash scripts/build-release.sh` produces a Linux amd64 tar.gz with binary, Apache license, third-party notices, README, config and deployment guide plus SHA256SUMS. Same-source/toolchain archives are deterministic; Docker packages/layers can change with security updates. `Release v...` main commit messages cause the release job to publish already-verified assets as a prerelease and create the matching source tag only after all tests/container/artifact jobs pass. Ordinary commits only upload CI artifacts. Confirm https://github.com/rendercache/rendercache/releases/tag/v0.1.0-alpha.1 and the corresponding latest workflow; do not infer successful publication solely from this file.  No registry image or other-platform binary is published.
 
 Verified published release: https://github.com/rendercache/rendercache/releases/tag/v0.1.0-alpha.1 targets commit 420354c45260580cf579350dea43629516f21368. Release CI run 38921434475 passed test, container, artifacts and release jobs. The lightweight source tag resolves to that same commit. Attached assets are rendercache_0.1.0-alpha.1_linux_amd64.tar.gz (3,716,452 bytes; SHA-256 dd5113ffc26c72e2830d3765448a1da67ae931779d55f8382d54a5f15d770b1b) and SHA256SUMS (111 bytes; SHA-256 c25ea0e4a51cbbebe9f3c1af1a7a27513a1936bd05f66ff14145ee246c7c9f36). Both GitHub asset digests matched locally rebuilt files from the tagged source. This resume-only publication receipt is recorded after the tested release commit; it does not change the tagged executable or assets.
+
+## Session 8: review fixes (2026-10-17)
+
+The user asked for a review and then "fix all issues". Fixed:
+
+- Forwarding headers. ReverseProxy.Rewrite drops inbound X-Forwarded-*, and RenderCache has no TLS listener, so the origin saw every crawler miss/bypass as plain HTTP from the edge address. HTTPS-enforcing apps would redirect crawlers back to the same URL in a loop. New `trusted_proxies` (default loopback) and a matched `edge_token` now keep the inbound X-Forwarded-For chain and a validated X-Forwarded-Proto/Host. Untrusted peers are unchanged. The Cloudflare Worker now sends CF-Connecting-IP, scheme and host; container.json trusts the Docker bridge range.
+- Default crawler list adds Google-InspectionTool (Search Console URL Inspection and Rich Results Test), GoogleOther, Amazonbot, YandexBot, Baiduspider and CCBot. The nginx map, Worker list and example config match.
+- Request-page allowance evicts the least recently requested idle entry instead of refusing new URLs until restart. Busy, purge-pending and withdrawn entries keep their slots. Status exposes `request_evictions`. Snapshots of evicted pages stay on disk.
+- New `ignore_query_params` (utm_*, gclid, fbclid, msclkid) drops tracking parameters from the snapshot identity; the origin still gets the full URL.
+- New `bypass_paths` replaces the hard-coded /api prefix (purge and diagnostics honor it).
+- Vary is no longer added to asset and bypassed-path responses.
+- Snapshot TTL and origin timeout are parsed once in proxy.New.
+- README opens with a short plain explanation and quick start.
+
+Verification in this session: the sandbox could not reach proxy.golang.org or golang.org/x/net. Go 1.26.2 was built from source. config, delivery, localfs, sitemap, target, snapshot, render (Chrome tests skipped, no browser), warm, cmd and examples passed `go test -race`. To compile the remaining packages without x/net, a local compile-only stub of x/net/html and netutil was used in a scratch copy: `go vet ./...` passed, and every proxy and warm test passed except those that depend on real HTML parsing (detect and the demo comparison), which need the real module. Cloudflare Worker tests pass under Node 22. Real-Chrome, nginx and container checks were not run here; CI must confirm them before any release.
 
 ## Exact next session, only upon “Go”
 

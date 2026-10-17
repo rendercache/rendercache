@@ -102,7 +102,7 @@ func (g *Gateway) demoPage(w http.ResponseWriter, r *http.Request) (target.Page,
 	}
 	check, _ := http.NewRequest("GET", p.URL, nil)
 	check.Header.Set("User-Agent", "RenderCache-Demo")
-	if Classify(check, []string{"RenderCache-Demo"}).Outcome != "MISS" {
+	if ClassifyPaths(check, []string{"RenderCache-Demo"}, g.cfg.BypassPaths).Outcome != "MISS" {
 		failure(w, 400, "URL is not an eligible HTML page")
 		return target.Page{}, false
 	}

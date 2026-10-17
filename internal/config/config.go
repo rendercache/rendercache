@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/netip"
 	"net/url"
 	"os"
 	"strings"
@@ -55,6 +56,9 @@ type Config struct {
 	AdminListen         string   `json:"admin_listen"`
 	AdminToken          string   `json:"admin_token,omitempty"`
 	Bots                []string `json:"bots"`
+	BypassPaths         []string `json:"bypass_paths"`
+	IgnoreQueryParams   []string `json:"ignore_query_params"`
+	TrustedProxies      []string `json:"trusted_proxies"`
 	OriginTimeout       string   `json:"origin_timeout"`
 	ShutdownTimeout     string   `json:"shutdown_timeout"`
 }
@@ -72,7 +76,11 @@ func Default() Config {
 			"Googlebot", "bingbot", "DuckDuckBot", "OAI-SearchBot", "GPTBot", "ChatGPT-User",
 			"ClaudeBot", "Claude-SearchBot", "Claude-User", "PerplexityBot", "Perplexity-User",
 			"Meta-ExternalAgent", "Bytespider", "Applebot", "facebookexternalhit", "Twitterbot", "LinkedInBot", "Slackbot", "Discordbot",
+			"Google-InspectionTool", "GoogleOther", "Amazonbot", "YandexBot", "Baiduspider", "CCBot",
 		},
+		BypassPaths:       []string{"/api"},
+		IgnoreQueryParams: []string{"utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "gclid", "fbclid", "msclkid"},
+		TrustedProxies:    []string{"127.0.0.0/8", "::1/128"},
 	}
 }
 
@@ -230,5 +238,38 @@ func (c Config) Validate() error {
 			return errors.New("bot patterns must contain 1..128 bytes")
 		}
 	}
+	if len(c.BypassPaths) > 64 || len(c.IgnoreQueryParams) > 64 || len(c.TrustedProxies) > 64 {
+		return errors.New("bypass_paths, ignore_query_params and trusted_proxies accept at most 64 entries each")
+	}
+	for _, prefix := range c.BypassPaths {
+		if !strings.HasPrefix(prefix, "/") || prefix == "/" || len(prefix) > 1024 || strings.ContainsAny(prefix, "?#") {
+			return fmt.Errorf("bypass_paths: %q must be a path prefix such as /api", prefix)
+		}
+	}
+	for _, name := range c.IgnoreQueryParams {
+		if name == "" || len(name) > 128 || strings.ContainsAny(name, "&=#") {
+			return fmt.Errorf("ignore_query_params: invalid name %q", name)
+		}
+	}
+	if _, err := c.TrustedPrefixes(); err != nil {
+		return err
+	}
 	return nil
+}
+
+// TrustedPrefixes parses trusted_proxies. A bare address is a single-host prefix.
+func (c Config) TrustedPrefixes() ([]netip.Prefix, error) {
+	out := make([]netip.Prefix, 0, len(c.TrustedProxies))
+	for _, raw := range c.TrustedProxies {
+		prefix, err := netip.ParsePrefix(raw)
+		if err != nil {
+			addr, addrErr := netip.ParseAddr(raw)
+			if addrErr != nil {
+				return nil, fmt.Errorf("trusted_proxies: invalid address or CIDR %q", raw)
+			}
+			prefix = netip.PrefixFrom(addr, addr.BitLen())
+		}
+		out = append(out, prefix.Masked())
+	}
+	return out, nil
 }

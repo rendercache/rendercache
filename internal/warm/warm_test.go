@@ -423,3 +423,40 @@ func TestPurgeRetiredInFlightPageGetsFollowup(t *testing.T) {
 		t.Fatal("retired request not admitted")
 	}
 }
+
+func TestRequestAllowanceEvictsIdlePages(t *testing.T) {
+	store, _ := snapshot.Open(t.TempDir(), 1024)
+	o := opts()
+	o.MaxExtraPages = 2
+	var calls atomic.Int32
+	m, _ := New(o, discoverFunc(func(context.Context) ([]target.Page, error) { return nil, nil }), renderFunc(func(ctx context.Context, p target.Page) (render.Result, error) {
+		calls.Add(1)
+		return result(p), nil
+	}), store)
+	m.Start(context.Background())
+	defer m.Close()
+	for i, path := range []string{"/one", "/two"} {
+		if _, err := m.Request(page(path), "cold"); err != nil {
+			t.Fatal(err)
+		}
+		wait(t, func() bool { return m.Status().RenderSuccesses == uint64(i+1) })
+	}
+	m.Request(page("/one"), "stale") // /two is now the least recently requested
+	wait(t, func() bool { return m.Status().RenderSuccesses == 3 })
+	if _, err := m.Request(page("/three"), "cold"); err != nil {
+		t.Fatal("idle page not evicted:", err)
+	}
+	wait(t, func() bool { return m.Status().RenderSuccesses == 4 })
+	s := m.Status()
+	if s.ExtraPages != 2 || s.RequestEvictions != 1 || s.RequestRejections != 0 {
+		t.Fatal(s)
+	}
+	for _, d := range s.ExtraDetails {
+		if d.URL == page("/two").URL {
+			t.Fatal("least recently requested page was kept")
+		}
+	}
+	if _, err := store.Load(page("/two")); err != nil {
+		t.Fatal("eviction must not delete the saved snapshot", err)
+	}
+}

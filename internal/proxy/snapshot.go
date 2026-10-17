@@ -22,7 +22,7 @@ func (g *Gateway) request(p target.Page, reason string) (string, error) {
 }
 func (g *Gateway) snapshot(w http.ResponseWriter, r *http.Request, route Route) bool {
 	// Request Host/forwarding claims never select the namespace or origin.
-	p, err := target.Map(g.cfg.SiteURL(), g.cfg.Origin, r.URL.RequestURI())
+	p, err := target.Map(g.cfg.SiteURL(), g.cfg.Origin, g.snapshotURI(r.URL.RequestURI()))
 	if err != nil {
 		return false
 	}
@@ -38,9 +38,8 @@ func (g *Gateway) snapshot(w http.ResponseWriter, r *http.Request, route Route) 
 	if g.warming != nil {
 		g.warming.Observe(p, record)
 	}
-	ttl, _ := time.ParseDuration(g.cfg.SnapshotTTL)
 	outcome := "HIT"
-	if time.Since(record.CreatedAt) >= ttl || record.CreatedAt.After(time.Now().Add(time.Minute)) {
+	if time.Since(record.CreatedAt) >= g.ttl || record.CreatedAt.After(time.Now().Add(time.Minute)) {
 		outcome = "STALE"
 		_, _ = g.request(p, "stale")
 		g.stale.Add(1)
@@ -83,6 +82,31 @@ func (g *Gateway) snapshot(w http.ResponseWriter, r *http.Request, route Route) 
 		_, _ = w.Write([]byte(record.Result.HTML))
 	}
 	return true
+}
+
+// snapshotURI drops configured tracking parameters (utm_*, gclid and similar)
+// so query variants share one snapshot. Remaining parameters keep their
+// original order and escaping. The origin still receives the full URL on a miss.
+func (g *Gateway) snapshotURI(uri string) string {
+	path, query, ok := strings.Cut(uri, "?")
+	if !ok || len(g.ignored) == 0 {
+		return uri
+	}
+	kept := make([]string, 0, 4)
+	for _, part := range strings.Split(query, "&") {
+		name, _, _ := strings.Cut(part, "=")
+		if decoded, err := url.QueryUnescape(name); err == nil {
+			name = decoded
+		}
+		if part != "" && g.ignored[strings.ToLower(name)] {
+			continue
+		}
+		kept = append(kept, part)
+	}
+	if len(kept) == 0 {
+		return path
+	}
+	return path + "?" + strings.Join(kept, "&")
 }
 func notModified(r *http.Request, etag string, created time.Time) bool {
 	if value := r.Header.Get("If-None-Match"); value != "" {
@@ -127,7 +151,7 @@ func (g *Gateway) purge(w http.ResponseWriter, r *http.Request) {
 	}
 	check, _ := http.NewRequest(http.MethodGet, p.URL, nil)
 	check.Header.Set("User-Agent", "RenderCache-Purge")
-	if Classify(check, []string{"RenderCache-Purge"}).Outcome != "MISS" {
+	if ClassifyPaths(check, []string{"RenderCache-Purge"}, g.cfg.BypassPaths).Outcome != "MISS" {
 		failure(400, "URL is not an eligible HTML page")
 		return
 	}

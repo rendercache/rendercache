@@ -271,3 +271,27 @@ func TestRedirectRemovalAndCorruptFileFallback(t *testing.T) {
 		t.Fatal("legacy followed redirect accepted")
 	}
 }
+
+func TestTrackingParametersShareSnapshot(t *testing.T) {
+	g, s, _, calls := cachedGateway(t)
+	if _, err := s.Save(mapped(g, "/story?id=7"), render.Result{HTML: "<p>story</p>", Status: 200}); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"/story?id=7", "/story?utm_source=x&id=7&gclid=abc", "/story?id=7&UTM_Campaign=y"} {
+		w := bot(g, "GET", path, nil)
+		if w.Header().Get("X-RenderCache") != "HIT" || w.Body.String() != "<p>story</p>" {
+			t.Fatal(path, w.Header(), w.Body.String())
+		}
+	}
+	if w := bot(g, "GET", "/story?id=8&utm_source=x", nil); w.Header().Get("X-RenderCache") != "MISS" {
+		t.Fatal("different real parameter must not share the snapshot")
+	}
+	if calls.Load() != 1 {
+		t.Fatal("unexpected origin calls", calls.Load())
+	}
+	for in, want := range map[string]string{"/a": "/a", "/a?utm_source=1": "/a", "/a?b=1&utm_medium=2&c=%20": "/a?b=1&c=%20", "/a?utm%5Fterm=1": "/a"} {
+		if got := g.snapshotURI(in); got != want {
+			t.Errorf("%s -> %s, want %s", in, got, want)
+		}
+	}
+}

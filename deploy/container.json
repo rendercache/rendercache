@@ -9,5 +9,10 @@
   "snapshot_max_bytes": 1073741824,
   "snapshot_max_files": 10000,
   "http_concurrency": 32,
-  "ready_selector": "main[data-ready]"
+  "ready_selector": "main[data-ready]",
+  "trusted_proxies": [
+    "127.0.0.0/8",
+    "::1/128",
+    "172.16.0.0/12"
+  ]
 }

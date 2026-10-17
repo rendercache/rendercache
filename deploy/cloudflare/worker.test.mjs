@@ -3,9 +3,10 @@ import assert from 'node:assert/strict';
 import {handle} from './worker.mjs';
 const env={PUBLIC_HOST:'app.example.com',CACHE_ORIGIN:'https://cache.example.net',RENDERCACHE_EDGE_TOKEN:'edge-secret'};
 test('bot routing preserves escaped path, query and validators; redirects are manual',async()=>{
- const incoming=new Request('https://app.example.com/a%2Fb?q=1&q=2',{headers:{'User-Agent':'GPTBot','If-None-Match':'"etag"','X-RenderCache-Edge-Key':'untrusted'}});
+ const incoming=new Request('https://app.example.com/a%2Fb?q=1&q=2',{headers:{'User-Agent':'GPTBot','If-None-Match':'"etag"','X-RenderCache-Edge-Key':'untrusted','CF-Connecting-IP':'203.0.113.9','X-Forwarded-For':'spoofed','X-Forwarded-Proto':'http'}});
  const response=await handle(incoming,env,async(req,options)=>{
   assert.equal(req.url,'https://cache.example.net/a%2Fb?q=1&q=2');assert.equal(req.redirect,'manual');assert.equal(req.headers.get('X-RenderCache-Edge-Key'),'edge-secret');assert.equal(req.headers.get('If-None-Match'),'"etag"');assert.equal(options.cf.cacheTtl,0);
+  assert.equal(req.headers.get('X-Forwarded-For'),'203.0.113.9');assert.equal(req.headers.get('X-Forwarded-Proto'),'https');assert.equal(req.headers.get('X-Forwarded-Host'),'app.example.com');
   return new Response(null,{status:302,headers:{Location:'https://app.example.com/new','X-RenderCache':'HIT'}});
  });assert.equal(response.status,302);assert.equal(response.headers.get('Location'),'https://app.example.com/new');assert.equal(response.headers.get('Cache-Control'),'private, no-store');
 });

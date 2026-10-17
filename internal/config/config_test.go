@@ -118,3 +118,38 @@ func TestSnapshotConfigurationLimits(t *testing.T) {
 		}
 	}
 }
+
+func TestRoutingAndForwardingSettings(t *testing.T) {
+	valid := Default()
+	valid.Origin = "https://example.com"
+	if err := valid.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	prefixes, err := valid.TrustedPrefixes()
+	if err != nil || len(prefixes) != 2 {
+		t.Fatal(prefixes, err)
+	}
+	valid.TrustedProxies = []string{"10.0.0.7", "2001:db8::/32"}
+	if prefixes, err := valid.TrustedPrefixes(); err != nil || prefixes[0].String() != "10.0.0.7/32" {
+		t.Fatal(prefixes, err)
+	}
+	for _, mutate := range []func(*Config){
+		func(c *Config) { c.TrustedProxies = []string{"not-an-ip"} },
+		func(c *Config) { c.BypassPaths = []string{"api"} },
+		func(c *Config) { c.BypassPaths = []string{"/"} },
+		func(c *Config) { c.BypassPaths = []string{"/api?x"} },
+		func(c *Config) { c.IgnoreQueryParams = []string{""} },
+		func(c *Config) { c.IgnoreQueryParams = []string{"a=b"} },
+	} {
+		c := valid
+		mutate(&c)
+		if c.Validate() == nil {
+			t.Errorf("accepted invalid routing settings: %+v %+v %+v", c.TrustedProxies, c.BypassPaths, c.IgnoreQueryParams)
+		}
+	}
+	empty := valid
+	empty.BypassPaths, empty.IgnoreQueryParams, empty.TrustedProxies = []string{}, []string{}, []string{}
+	if err := empty.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}

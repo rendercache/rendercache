@@ -1,5 +1,15 @@
 # RenderCache
 
+Most AI crawlers don't run JavaScript. If your site is a JavaScript app, GPTBot, ClaudeBot and PerplexityBot see an empty shell. RenderCache sits in front of the app, renders each page once in headless Chrome, keeps the finished HTML on disk and hands it to crawlers. People still get the normal app.
+
+```sh
+go build -o bin/rendercache ./cmd/rendercache
+./bin/rendercache serve --origin https://app.example.com
+curl -I -A GPTBot http://127.0.0.1:8080/    # X-RenderCache: MISS, then HIT once warmed
+```
+
+The admin page on `127.0.0.1:9090` shows what a crawler gets next to the raw HTML, which words only appear after rendering, and a log of every crawler delivery. Details follow.
+
 A self-hosted pre-render cache for JavaScript sites, designed to prepare HTML before bots and AI crawlers arrive.
 
 **Alpha prototype — 0.1.0-alpha.1, Linux amd64.** RenderCache warms JavaScript pages from sitemaps, stores rendered responses and serves them to recognized crawler claims. Humans receive the ordinary app. Fresh snapshots return `HIT`; expired snapshots return `STALE` while a deduplicated refresh runs in the background. A cold `MISS` proxies the origin immediately and requests background rendering. The protected admin page compares raw HTML with a saved snapshot, highlights missing text and shows rotating delivery receipts. Snapshot quotas, explicit prune, process locking, constrained HTTP work and Docker/deployment/release packaging are included. This is an evaluation alpha, not a production-readiness claim.
@@ -89,7 +99,9 @@ Stored responses use `Cache-Control: private, no-cache` and vary on User-Agent, 
 
 Redirects preserve their original status and location without fetching the destination. Origin-host locations are mapped back to the public hostname, with fragments retained; valid external HTTP(S) locations are preserved without allowing browser navigation to them. Persisted removals return 404/410 with an empty body. Redirect/removal records refresh on the same schedule as HTML, allowing recovery when a page returns.
 
-Request-driven pages have a separate `request_page_limit` allowance (default 256). They cannot evict the sitemap set and remain deduplicated across rediscovery. Retired in-flight sitemap jobs are bounded by the queue/workers and can finish. Once the request allowance is full, additional cold URLs continue to proxy and stale URLs can still serve their saved copies; a purge for a new URL returns 429. These slots are not evicted during the process lifetime and reset on restart. They do not impose a disk quota. Sitemap coverage counts stay separate from request-driven pages, which have their own count and rejection counter.
+Request-driven pages have a separate `request_page_limit` allowance (default 256). They cannot evict the sitemap set and remain deduplicated across rediscovery. Retired in-flight sitemap jobs are bounded by the queue/workers and can finish. Once the allowance is full, a new URL takes the slot of the least recently requested idle page. Pages that are queued, rendering, waiting for a purge or withdrawn as private keep their slots; only when every slot is busy does a new cold URL proxy without rendering and a purge for it return 429. An evicted page's snapshot stays on disk and is still served; it just stops being refreshed until a crawler asks for it again. Slots reset on restart and do not impose a disk quota. Sitemap coverage counts stay separate from request-driven pages, which have their own count, eviction counter and rejection counter.
+
+Tracking parameters listed in `ignore_query_params` (utm_*, gclid, fbclid and msclkid by default) are dropped from the snapshot identity, so `/story?id=7&utm_source=x` is served the snapshot of `/story?id=7` and does not use a slot of its own. Other parameters keep their order and escaping. The origin still receives the full URL on a miss.
 
 Purge is available only on the administration listener and always requires a configured token, including on loopback. Set the token in the environment before starting `serve`:
 
@@ -134,7 +146,7 @@ The endpoint accepts exactly one public URL (or root-relative path) and returns 
 | `render_allow_origins` | empty | Additional explicit HTTP(S) asset roots |
 | `snapshot_enabled` | `true` | Serve saved responses to eligible bots |
 | `snapshot_ttl` | `24h` | HTTP freshness age, minimum 1s |
-| `request_page_limit` | 256 | Separate request-driven page allowance, range 1–10000 |
+| `request_page_limit` | 256 | Request-driven page allowance with least-recently-requested eviction, range 1–10000 |
 | `warm_enabled` | `true` | Enable warming while serving |
 | `sitemap_urls` | `["/sitemap.xml"]` | Public root sitemap URLs/paths |
 | `warm_interval` | `24h` | Snapshot refresh age; minimum 1s |
@@ -153,11 +165,16 @@ The endpoint accepts exactly one public URL (or root-relative path) and returns 
 | `admin_token` | empty | Optional bearer token on loopback, required elsewhere |
 | `origin_timeout` | `30s` | Upstream response-header timeout |
 | `shutdown_timeout` | `10s` | Graceful shutdown deadline |
-| `bots` | search, AI and preview crawler patterns | Case-insensitive user-agent substring matches |
+| `bots` | search, AI and preview crawler patterns, including Google-InspectionTool for Search Console tests | Case-insensitive user-agent substring matches |
+| `bypass_paths` | `["/api"]` | Path prefixes that always go to the origin, for example `/graphql` or `/wp-json` |
+| `ignore_query_params` | utm_*, gclid, fbclid, msclkid | Query parameters left out of the snapshot identity, case-insensitive |
+| `trusted_proxies` | `["127.0.0.0/8", "::1/128"]` | Peers whose X-Forwarded-For/Proto/Host are passed to the origin |
 
 Every admin route requires `Authorization: Bearer <token>` or HTTP Basic authentication (username `rendercache`, password the token) when a token is configured. Browsers receive a Basic challenge. Use HTTPS or a local tunnel for remote administration; Basic and bearer credentials both require transport protection. Use the environment variable rather than committing a real token. `/healthz` reports process health; `/status` reports routing counters and reports warming status and whether automatic warming is enabled; shows whether snapshot serving is enabled. These endpoints are not mounted on the public listener. Public `/status` requests still go to the origin.
 
-Only GET/HEAD document requests without cookies or authorization are eligible for the snapshot path. API paths, non-HTML file extensions, non-HTML Accept headers, range/upgrade requests and `Cache-Control: no-store` bypass it. A user-agent match is a crawler claim, not an authenticated identity. Every upstream response varies on User-Agent, Cookie and Authorization; upstream cookies, status codes and content are preserved. Incoming forwarding claims are removed before fresh forwarding headers are generated. Keep TLS and any trusted edge routing in front of this HTTP service.
+Only GET/HEAD document requests without cookies or authorization are eligible for the snapshot path. Paths under `bypass_paths`, non-HTML file extensions, non-HTML Accept headers, range/upgrade requests and `Cache-Control: no-store` bypass it. A user-agent match is a crawler claim, not an authenticated identity. Document responses vary on User-Agent, Cookie, Authorization and Accept; assets and bypassed paths get no added Vary, because crawlers and people receive the same bytes there and the extra Vary would split shared caches. Upstream cookies, status codes and content are preserved. Keep TLS and any trusted edge routing in front of this HTTP service.
+
+Forwarding headers: RenderCache has no TLS listener, so on its own it would tell the origin every request arrived over plain HTTP from the edge's address. When the immediate peer is in `trusted_proxies`, or an `edge_token` is configured and matched, the incoming X-Forwarded-For chain is kept (with the peer appended) and a valid X-Forwarded-Proto (`http` or `https`) and X-Forwarded-Host are passed on. From any other peer these headers are discarded and rebuilt. Without this, apps that force HTTPS from X-Forwarded-Proto redirect crawler misses back to the same URL in a loop. A Forwarded header is never passed on.
 
 Crawler delivery receipts are written as rotating JSON lines under `data_dir/delivery/crawler.jsonl`; see the diagnostics section below. Stderr carries process lifecycle/error messages with bounded waits. The proxy has a total `origin_timeout` deadline (including streaming and upgrades), bounded origin connections/headers, 256/16 public/admin listener connections, public request body limits and a concurrency gate. Oversized known bodies return 413; streamed overflow can abort a request or return a gateway error depending on when detected. Slow uploads are subject to server read deadlines. Use cgroup/container limits for browser RSS, processes and temporary disk. See deployment guide before enabling external routing. Sitemap warming is proactive; eligible misses/stale requests can also request bounded background work. Manual `render` always performs new browser work. Bots' query strings are forwarded unchanged, but query strings are omitted from diagnostic logs.
 

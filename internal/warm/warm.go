@@ -51,6 +51,7 @@ type entry struct {
 	failures    int
 	lastError   string
 	lastAttempt time.Time
+	lastRequest time.Time
 }
 type PageStatus struct {
 	URL         string    `json:"url"`
@@ -70,6 +71,7 @@ type Status struct {
 	ExtraFailed       int          `json:"extra_failed_pages"`
 	ExtraPages        int          `json:"extra_pages"`
 	RequestRejections uint64       `json:"request_rejections"`
+	RequestEvictions  uint64       `json:"request_evictions"`
 	Discovered        int          `json:"discovered"`
 	Cached            int          `json:"cached"`
 	Missing           int          `json:"missing"`
@@ -112,6 +114,7 @@ type Manager struct {
 	successes      uint64
 	failures       uint64
 	rejected       uint64
+	evicted        uint64
 }
 
 func New(o Options, source Discoverer, engine render.Engine, store Store) (*Manager, error) {
@@ -409,7 +412,7 @@ func (m *Manager) Status() Status {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	now := time.Now()
-	s := Status{ExtraPages: len(m.extras), RequestRejections: m.rejected, Enabled: true, State: "warming", Discovered: len(m.entries), Queued: len(m.jobs), Rendering: m.active, RenderSuccesses: m.successes, RenderFailures: m.failures, Discovering: m.discovering, LastDiscovery: m.lastDiscovery, NextDiscovery: m.nextDiscovery, DiscoveryError: m.discoveryError, Pages: []PageStatus{}}
+	s := Status{ExtraPages: len(m.extras), RequestRejections: m.rejected, RequestEvictions: m.evicted, Enabled: true, State: "warming", Discovered: len(m.entries), Queued: len(m.jobs), Rendering: m.active, RenderSuccesses: m.successes, RenderFailures: m.failures, Discovering: m.discovering, LastDiscovery: m.lastDiscovery, NextDiscovery: m.nextDiscovery, DiscoveryError: m.discoveryError, Pages: []PageStatus{}}
 	keys := make([]string, 0, len(m.entries))
 	for key := range m.entries {
 		keys = append(keys, key)
@@ -548,7 +551,7 @@ func (m *Manager) Request(p target.Page, reason string) (string, error) {
 	}
 	e := m.lookup(p.Key())
 	if e == nil {
-		if len(m.extras) >= m.opts.MaxExtraPages {
+		if !m.makeRoom() {
 			m.rejected++
 			return "", ErrCapacity
 		}
@@ -557,13 +560,14 @@ func (m *Manager) Request(p target.Page, reason string) (string, error) {
 	}
 
 	if m.retired[p.Key()] == e {
-		if len(m.extras) >= m.opts.MaxExtraPages {
+		if !m.makeRoom() {
 			m.rejected++
 			return "", ErrCapacity
 		}
 		delete(m.retired, p.Key())
 		m.extras[p.Key()] = e
 	}
+	e.lastRequest = time.Now()
 	if reason == "cold" {
 		e.cached = false
 		e.created = time.Time{}
@@ -583,6 +587,33 @@ func (m *Manager) Request(p target.Page, reason string) (string, error) {
 	}
 	m.notify()
 	return "queued", nil
+}
+
+// makeRoom frees one request-page slot when the allowance is full by dropping
+// the least recently requested idle entry. Its snapshot stays on disk and can
+// still be served; it is only no longer refreshed until requested again.
+// Entries with queued, running, pending-purge or withdrawn state are kept.
+// The caller holds m.mu.
+func (m *Manager) makeRoom() bool {
+	if len(m.extras) < m.opts.MaxExtraPages {
+		return true
+	}
+	var oldestKey string
+	var oldest *entry
+	for key, e := range m.extras {
+		if e.queued || e.active || e.rerun || e.force || e.withdrawn {
+			continue
+		}
+		if oldest == nil || e.lastRequest.Before(oldest.lastRequest) {
+			oldestKey, oldest = key, e
+		}
+	}
+	if oldest == nil {
+		return false
+	}
+	delete(m.extras, oldestKey)
+	m.evicted++
+	return true
 }
 func (m *Manager) Observe(p target.Page, record snapshot.Record) {
 	m.mu.Lock()
