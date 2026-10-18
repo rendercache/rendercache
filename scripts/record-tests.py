@@ -4,6 +4,8 @@
     python3 scripts/record-tests.py            run tests, write test/results/<os>-<arch>.json
     python3 scripts/record-tests.py --annotate also print GitHub annotations (used by CI)
     python3 scripts/record-tests.py --summarize  rebuild test/results/README.md from the JSON files
+    python3 scripts/record-tests.py --from-ci RUN_ID  copy each platform's results from a CI run
+                                                   (needs gh); then run --summarize
 
 Set RENDERCACHE_TEST_CHROME to include the real-browser tests. Lines that tests
 log as "RESULT name=value" are collected as measured results. Every number on
@@ -128,6 +130,7 @@ def summarize():
               "|" + "---|" * (len(reports) + 1)]
     rows = [("Recorded (UTC)", lambda r: r["recorded_at"]), ("Commit", lambda r: r["commit"][:12]),
             ("Go", lambda r: r["go"]), ("Real Chrome", lambda r: "yes" if r["real_chrome"] else "no"),
+            ("CI run", lambda r: r.get("ci_run", "local")),
             ("Tests passed", lambda r: r["tests"]["passed"]), ("Tests failed", lambda r: r["tests"]["failed"]),
             ("Tests skipped", lambda r: r["tests"]["skipped"])]
     names = sorted({name for r in reports for name in r["results"]})
@@ -138,8 +141,34 @@ def summarize():
     print(RESULTS / "README.md")
 
 
+def from_ci(run_id):
+    """Copy the test-results notices that CI printed for each platform."""
+    repo = "rendercache/rendercache"
+    jobs = json.loads(subprocess.run(["gh", "api", f"repos/{repo}/actions/runs/{run_id}/jobs?per_page=100"],
+                                     capture_output=True, text=True, check=True).stdout)["jobs"]
+    RESULTS.mkdir(parents=True, exist_ok=True)
+    written = 0
+    for job in jobs:
+        if not job["name"].startswith("test ("):
+            continue
+        annotations = json.loads(subprocess.run(["gh", "api", f"repos/{repo}/check-runs/{job['id']}/annotations?per_page=100"],
+                                                capture_output=True, text=True, check=True).stdout)
+        for note in annotations:
+            if (note.get("title") or "").startswith("test-results"):
+                report = json.loads(note["message"])
+                report["ci_run"] = f"https://github.com/{repo}/actions/runs/{run_id}"
+                path = RESULTS / f"{report['os']}-{report['arch']}.json"
+                path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+                print(path, report["tests"])
+                written += 1
+    if not written:
+        sys.exit("no test-results annotations found in that run")
+
+
 if __name__ == "__main__":
-    if "--summarize" in sys.argv:
+    if "--from-ci" in sys.argv:
+        from_ci(sys.argv[sys.argv.index("--from-ci") + 1])
+    elif "--summarize" in sys.argv:
         summarize()
     else:
         sys.exit(record("--annotate" in sys.argv))
