@@ -155,7 +155,9 @@ func TestChromeTimeoutAndSize(t *testing.T) {
 
 func TestChromeCapacityWaitHonorsDeadline(t *testing.T) {
 	opts := browserOptions(t)
-	opts.Timeout = 2 * time.Second
+	// The render deadline also covers Chrome's start, which can take many
+	// seconds on a cold CI runner. The first render is cancelled below instead.
+	opts.Timeout = 30 * time.Second
 	entered := make(chan struct{}, 1)
 	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		select {
@@ -169,10 +171,12 @@ func TestChromeCapacityWaitHonorsDeadline(t *testing.T) {
 	p, _ := target.Map(origin.URL, origin.URL, "/")
 	engine, _ := NewChrome(opts)
 	first := make(chan error, 1)
-	go func() { _, err := engine.Render(context.Background(), p); first <- err }()
+	firstCtx, stopFirst := context.WithCancel(context.Background())
+	defer stopFirst()
+	go func() { _, err := engine.Render(firstCtx, p); first <- err }()
 	select {
 	case <-entered:
-	case <-time.After(5 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("first render never reached origin")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 80*time.Millisecond)
@@ -184,7 +188,8 @@ func TestChromeCapacityWaitHonorsDeadline(t *testing.T) {
 	if time.Since(started) > time.Second {
 		t.Fatal("capacity wait did not respect request deadline")
 	}
+	stopFirst()
 	if err := <-first; err == nil {
-		t.Fatal("first render should time out")
+		t.Fatal("first render should stop when cancelled")
 	}
 }
