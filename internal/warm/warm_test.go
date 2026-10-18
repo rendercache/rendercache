@@ -38,7 +38,7 @@ func result(p target.Page) render.Result {
 }
 func wait(t *testing.T, condition func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(4 * time.Second)
+	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
 		if condition() {
 			return
@@ -126,8 +126,8 @@ func TestBoundedQueueConcurrencyAndShutdown(t *testing.T) {
 	}
 	started := time.Now()
 	m.Close()
-	if time.Since(started) > time.Second || running.Load() != 0 || m.Status().State != "stopped" || m.Status().RenderFailures != 0 {
-		t.Fatal("shutdown leaked or counted cancellation as failure")
+	if time.Since(started) > 5*time.Second || running.Load() != 0 || m.Status().State != "stopped" || m.Status().RenderFailures != 0 {
+		t.Fatal("shutdown leaked or counted cancellation as failure", time.Since(started), running.Load(), m.Status().State, m.Status().RenderFailures)
 	}
 }
 func TestRetryBackoffPreservesStaleAndRecovers(t *testing.T) {

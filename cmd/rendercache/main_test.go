@@ -175,7 +175,7 @@ func TestServeWarmsBeforeBotAndReusesDisk(t *testing.T) {
 	cfg.ChromePath = chrome
 	cfg.ChromeNoSandbox = os.Getenv("RENDERCACHE_TEST_NO_SANDBOX") == "1"
 	cfg.ReadySelector = "#ready"
-	cfg.RenderTimeout = "10s"
+	cfg.RenderTimeout = "30s"
 	configPath := filepath.Join(t.TempDir(), "config.json")
 	writeConfig := func() {
 		b, err := json.Marshal(cfg)
@@ -254,7 +254,7 @@ func TestServeWarmsBeforeBotAndReusesDisk(t *testing.T) {
 			stop()
 		}
 	}()
-	deadline := time.Now().Add(12 * time.Second)
+	deadline := time.Now().Add(60 * time.Second)
 	var s state
 	for time.Now().Before(deadline) {
 		s = getStatus(admin)

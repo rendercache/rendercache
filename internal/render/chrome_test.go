@@ -88,6 +88,9 @@ func TestChromeRealRenderingAndNetworkPolicy(t *testing.T) {
 	if result.BlockedRequests == 0 {
 		t.Fatal("no blocked requests recorded")
 	}
+	t.Logf("RESULT chrome_render_ms=%d", result.Duration.Milliseconds())
+	t.Logf("RESULT off_origin_requests_blocked=%d", result.BlockedRequests)
+	t.Logf("RESULT off_origin_requests_reaching_target=%d", forbiddenCalls.Load())
 	p, _ = target.Map("https://public.example", origin.URL, "/redirect")
 	result, err = engine.Render(context.Background(), p)
 	if err != nil || result.Status != 302 || result.Location != "https://public.example/" || len(result.Redirects) != 1 || result.Redirects[0].Status != 302 {

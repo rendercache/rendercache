@@ -39,18 +39,9 @@ jobs:
           # The Linux runner cannot use Chrome's sandbox; macOS and Windows keep it on.
           if [ "$RUNNER_OS" = Linux ]; then echo "RENDERCACHE_TEST_NO_SANDBOX=1" >> "$GITHUB_ENV"; fi
           if [ "$RUNNER_OS" = Windows ]; then echo "PYTHON=python" >> "$GITHUB_ENV"; else echo "PYTHON=python3" >> "$GITHUB_ENV"; fi
-      - name: Run go test -race ./...
+      - name: Run and record go test -race ./...
         run: |
-          set -o pipefail
-          status=0
-          go test -race ./... 2>&1 | tee go-test.log || status=$?
-          if [ "$status" -ne 0 ]; then
-            # Surface failures as annotations, readable through the API without downloading logs.
-            grep -E -- '--- FAIL|^FAIL|panic:|_test\.go:[0-9]+:' go-test.log | head -40 | while IFS= read -r line; do
-              echo "::error title=go test ${RUNNER_OS}::${line}"
-            done
-          fi
-          exit "$status"
+          "$PYTHON" scripts/record-tests.py --annotate
       - if: runner.os == 'Linux'
         run: node --test deploy/cloudflare/worker.test.mjs
       - name: Build and smoke-test the executable with real Chrome
