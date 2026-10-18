@@ -51,6 +51,11 @@ func TestWarmDedupPersistenceAndRestart(t *testing.T) {
 	pages := []target.Page{page("/a"), page("/b"), page("/a")}
 	source := discoverFunc(func(context.Context) ([]target.Page, error) { return pages, nil })
 	store, _ := snapshot.Open(t.TempDir(), 1<<20)
+	t.Cleanup(func() {
+		if store != nil {
+			store.Close()
+		}
+	}) // Windows cannot delete a folder still held open
 	var mu sync.Mutex
 	calls := map[string]int{}
 	engine := renderFunc(func(ctx context.Context, p target.Page) (render.Result, error) {
@@ -116,6 +121,11 @@ func TestBoundedQueueConcurrencyAndShutdown(t *testing.T) {
 		return render.Result{}, ctx.Err()
 	})
 	store, _ := snapshot.Open(t.TempDir(), 1024)
+	t.Cleanup(func() {
+		if store != nil {
+			store.Close()
+		}
+	}) // Windows cannot delete a folder still held open
 	o := opts()
 	o.QueueSize = 3
 	m, _ := New(o, discoverFunc(func(context.Context) ([]target.Page, error) { return pages, nil }), engine, store)
@@ -133,6 +143,11 @@ func TestBoundedQueueConcurrencyAndShutdown(t *testing.T) {
 func TestRetryBackoffPreservesStaleAndRecovers(t *testing.T) {
 	dir := t.TempDir()
 	store, _ := snapshot.Open(dir, 1024)
+	t.Cleanup(func() {
+		if store != nil {
+			store.Close()
+		}
+	}) // Windows cannot delete a folder still held open
 	p := page("/a")
 	saved, _ := store.Save(p, render.Result{HTML: "<h1>original</h1>", Status: 200})
 	saved.CreatedAt = time.Now().Add(-time.Hour)
@@ -187,6 +202,11 @@ func TestDiscoveryFailureKeepsPriorCoverageAndRecovers(t *testing.T) {
 	var fail atomic.Bool
 	p := page("/a")
 	store, _ := snapshot.Open(t.TempDir(), 1024)
+	t.Cleanup(func() {
+		if store != nil {
+			store.Close()
+		}
+	}) // Windows cannot delete a folder still held open
 	source := discoverFunc(func(context.Context) ([]target.Page, error) {
 		if fail.Load() {
 			return nil, errors.New("sitemap unavailable")
@@ -213,6 +233,11 @@ func TestDiscoveryFailureKeepsPriorCoverageAndRecovers(t *testing.T) {
 }
 func TestDiscoveryCancellationAndLimits(t *testing.T) {
 	store, _ := snapshot.Open(t.TempDir(), 1024)
+	t.Cleanup(func() {
+		if store != nil {
+			store.Close()
+		}
+	}) // Windows cannot delete a folder still held open
 	source := discoverFunc(func(ctx context.Context) ([]target.Page, error) { <-ctx.Done(); return nil, ctx.Err() })
 	m, _ := New(opts(), source, renderFunc(func(context.Context, target.Page) (render.Result, error) {
 		t.Error("render called before discovery")
@@ -238,6 +263,11 @@ func TestDiscoveryCancellationAndLimits(t *testing.T) {
 func TestRefreshRunsOnSchedule(t *testing.T) {
 	p := page("/scheduled")
 	store, _ := snapshot.Open(t.TempDir(), 1024)
+	t.Cleanup(func() {
+		if store != nil {
+			store.Close()
+		}
+	}) // Windows cannot delete a folder still held open
 	var mu sync.Mutex
 	calls := []time.Time{}
 	engine := renderFunc(func(context.Context, target.Page) (render.Result, error) {
@@ -285,6 +315,11 @@ func TestQueueBackpressureDoesNotDropPages(t *testing.T) {
 		return result(p), nil
 	})
 	store, _ := snapshot.Open(t.TempDir(), 1024)
+	t.Cleanup(func() {
+		if store != nil {
+			store.Close()
+		}
+	}) // Windows cannot delete a folder still held open
 	o := opts()
 	o.Workers = 1
 	o.QueueSize = 1
@@ -302,6 +337,11 @@ func TestQueueBackpressureDoesNotDropPages(t *testing.T) {
 func TestCorruptSnapshotIsRebuilt(t *testing.T) {
 	dir := t.TempDir()
 	store, _ := snapshot.Open(dir, 1024)
+	t.Cleanup(func() {
+		if store != nil {
+			store.Close()
+		}
+	}) // Windows cannot delete a folder still held open
 	p := page("/corrupt")
 	os.WriteFile(filepath.Join(dir, p.Key()+".json"), []byte("invalid JSON"), 0600)
 	m, _ := New(opts(), discoverFunc(func(context.Context) ([]target.Page, error) { return []target.Page{p}, nil }), renderFunc(func(context.Context, target.Page) (render.Result, error) { return result(p), nil }), store)
@@ -316,6 +356,11 @@ func TestCorruptSnapshotIsRebuilt(t *testing.T) {
 
 func TestRequestAllowanceDedupAndRediscovery(t *testing.T) {
 	store, _ := snapshot.Open(t.TempDir(), 1024)
+	t.Cleanup(func() {
+		if store != nil {
+			store.Close()
+		}
+	}) // Windows cannot delete a folder still held open
 	o := opts()
 	o.MaxExtraPages = 1
 	o.DiscoveryInterval = 10 * time.Millisecond
@@ -354,6 +399,11 @@ func TestRequestAllowanceDedupAndRediscovery(t *testing.T) {
 
 func TestPurgeIntentSurvivesObservationUnderQueuePressure(t *testing.T) {
 	store, _ := snapshot.Open(t.TempDir(), 1024)
+	t.Cleanup(func() {
+		if store != nil {
+			store.Close()
+		}
+	}) // Windows cannot delete a folder still held open
 	p := page("/target")
 	record, _ := store.Save(p, result(p))
 	gate := make(chan struct{})
@@ -390,6 +440,11 @@ func TestPurgeIntentSurvivesObservationUnderQueuePressure(t *testing.T) {
 
 func TestPurgeRetiredInFlightPageGetsFollowup(t *testing.T) {
 	store, _ := snapshot.Open(t.TempDir(), 1024)
+	t.Cleanup(func() {
+		if store != nil {
+			store.Close()
+		}
+	}) // Windows cannot delete a folder still held open
 	p := page("/retired")
 	var listed atomic.Bool
 	listed.Store(true)
@@ -434,6 +489,11 @@ func TestPurgeRetiredInFlightPageGetsFollowup(t *testing.T) {
 
 func TestRequestAllowanceEvictsIdlePages(t *testing.T) {
 	store, _ := snapshot.Open(t.TempDir(), 1024)
+	t.Cleanup(func() {
+		if store != nil {
+			store.Close()
+		}
+	}) // Windows cannot delete a folder still held open
 	o := opts()
 	o.MaxExtraPages = 2
 	var calls atomic.Int32

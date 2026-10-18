@@ -23,6 +23,11 @@ func testPage(t *testing.T) target.Page {
 func TestPersistenceAndCorruption(t *testing.T) {
 	dir := t.TempDir()
 	s, err := Open(dir, 1024)
+	t.Cleanup(func() {
+		if s != nil {
+			s.Close()
+		}
+	}) // Windows cannot delete a folder still held open
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,6 +40,11 @@ func TestPersistenceAndCorruption(t *testing.T) {
 		t.Fatal(err)
 	}
 	reopened, _ := Open(dir, 1024)
+	t.Cleanup(func() {
+		if reopened != nil {
+			reopened.Close()
+		}
+	}) // Windows cannot delete a folder still held open
 	loaded, err := reopened.Load(p)
 	if err != nil || saved.ContentHash != loaded.ContentHash || saved.Result.HTML != loaded.Result.HTML {
 		t.Fatal(loaded, err)
@@ -55,6 +65,11 @@ func TestPersistenceAndCorruption(t *testing.T) {
 func TestRejectedWritesPreserveSnapshot(t *testing.T) {
 	dir := t.TempDir()
 	s, _ := Open(dir, 32)
+	t.Cleanup(func() {
+		if s != nil {
+			s.Close()
+		}
+	}) // Windows cannot delete a folder still held open
 	p := testPage(t)
 	good := render.Result{HTML: "<h1>Original</h1>", Status: 200}
 	if _, err := s.Save(p, good); err != nil {
@@ -85,6 +100,11 @@ func TestRejectedWritesPreserveSnapshot(t *testing.T) {
 }
 func TestConcurrentAtomicReplace(t *testing.T) {
 	s, _ := Open(t.TempDir(), 1024)
+	t.Cleanup(func() {
+		if s != nil {
+			s.Close()
+		}
+	}) // Windows cannot delete a folder still held open
 	p := testPage(t)
 	s.Save(p, render.Result{HTML: "<h1>initial</h1>", Status: 200})
 	var wg sync.WaitGroup
@@ -107,6 +127,11 @@ func TestConcurrentAtomicReplace(t *testing.T) {
 
 func TestOutcomesAndValidators(t *testing.T) {
 	s, _ := Open(t.TempDir(), 1024)
+	t.Cleanup(func() {
+		if s != nil {
+			s.Close()
+		}
+	}) // Windows cannot delete a folder still held open
 	p := testPage(t)
 	var previous string
 	for _, r := range []render.Result{{Status: 404}, {Status: 410}, {Status: 301, Location: "https://elsewhere.example/"}, {Status: 200, HTML: "restored"}} {

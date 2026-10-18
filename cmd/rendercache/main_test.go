@@ -267,6 +267,11 @@ func TestServeWarmsBeforeBotAndReusesDisk(t *testing.T) {
 		t.Fatalf("warming did not prepare pages before bot: %+v", s)
 	}
 	store, _ := snapshot.Open(cfg.DataDir, cfg.MaxHTMLBytes)
+	t.Cleanup(func() {
+		if store != nil {
+			store.Close()
+		}
+	}) // Windows cannot delete a folder still held open
 	for _, path := range []string{"/one", "/two"} {
 		p, _ := target.Map(cfg.SiteURL(), cfg.Origin, path)
 		record, err := store.Load(p)

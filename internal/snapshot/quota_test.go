@@ -18,6 +18,11 @@ import (
 func TestQuotaPreservesOldRecordAndReaccountsOnRestart(t *testing.T) {
 	dir := t.TempDir()
 	s, err := OpenWithLimits(dir, 8192, Limits{MaxBytes: 4096, MaxFiles: 2})
+	t.Cleanup(func() {
+		if s != nil {
+			s.Close()
+		}
+	}) // Windows cannot delete a folder still held open
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,6 +52,11 @@ func TestQuotaPreservesOldRecordAndReaccountsOnRestart(t *testing.T) {
 		t.Fatal(before)
 	}
 	reopened, err := OpenWithLimits(dir, 8192, Limits{MaxBytes: 4096, MaxFiles: 1})
+	t.Cleanup(func() {
+		if reopened != nil {
+			reopened.Close()
+		}
+	}) // Windows cannot delete a folder still held open
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,6 +89,11 @@ func TestQuotaPreservesOldRecordAndReaccountsOnRestart(t *testing.T) {
 }
 func TestConcurrentQuotaAdmission(t *testing.T) {
 	s, err := OpenWithLimits(t.TempDir(), 1024, Limits{MaxBytes: 4096, MaxFiles: 3})
+	t.Cleanup(func() {
+		if s != nil {
+			s.Close()
+		}
+	}) // Windows cannot delete a folder still held open
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,6 +126,11 @@ func TestFileConfinementAndAbandonedTemps(t *testing.T) {
 	outside := filepath.Join(t.TempDir(), "private")
 	os.WriteFile(outside, []byte("private"), 0600)
 	s, err := Open(dir, 1024)
+	t.Cleanup(func() {
+		if s != nil {
+			s.Close()
+		}
+	}) // Windows cannot delete a folder still held open
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,6 +170,11 @@ func TestFileConfinementAndAbandonedTemps(t *testing.T) {
 func TestConcurrentSaveReadDeleteAndPruneAccounting(t *testing.T) {
 	dir := t.TempDir()
 	s, err := OpenWithLimits(dir, 1024, Limits{MaxBytes: 4096, MaxFiles: 4})
+	t.Cleanup(func() {
+		if s != nil {
+			s.Close()
+		}
+	}) // Windows cannot delete a folder still held open
 	if err != nil {
 		t.Fatal(err)
 	}

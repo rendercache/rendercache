@@ -34,6 +34,11 @@ func demoGateway(t *testing.T, origin http.Handler) (*Gateway, *delivery.Log) {
 	}
 	t.Cleanup(g.Close)
 	store, err := snapshot.Open(c.DataDir, c.MaxHTMLBytes)
+	t.Cleanup(func() {
+		if store != nil {
+			store.Close()
+		}
+	}) // Windows cannot delete a folder still held open
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,6 +47,12 @@ func demoGateway(t *testing.T, origin http.Handler) (*Gateway, *delivery.Log) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Close the log before its temp folder is removed (cleanups run last-in first-out).
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		l.Close(ctx)
+	})
 	g.SetDeliveryLog(l)
 	return g, l
 }

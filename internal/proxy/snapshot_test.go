@@ -52,6 +52,11 @@ func cachedGateway(t *testing.T) (*Gateway, *snapshot.Store, string, *atomic.Int
 	t.Cleanup(g.Close)
 	dir := t.TempDir()
 	store, _ := snapshot.Open(dir, 1<<20)
+	t.Cleanup(func() {
+		if store != nil {
+			store.Close()
+		}
+	}) // Windows cannot delete a folder still held open
 	g.SetSnapshotStore(store)
 	return g, store, dir, &calls
 }
