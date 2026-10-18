@@ -4,9 +4,9 @@ RenderCache 0.1.0-alpha.2 fixes a forwarding bug that could send crawlers into a
 
 **Crawler list.** Google-InspectionTool is now in the default list, so Search Console's URL Inspection and Rich Results Test see the cached page. GoogleOther, Amazonbot, YandexBot, Baiduspider and CCBot were added too. The nginx and Worker examples match.
 
-**Request-driven pages.** When all `request_page_limit` slots are used, a new URL now takes the slot of the least recently requested idle page instead of being refused until restart. Pages that are queued, rendering, waiting for a purge or withdrawn keep their slots. An evicted page's snapshot stays on disk and is still served. `/status` reports `request_evictions`.
+**Request-driven pages.** When all `request_page_limit` slots are used, a new URL now takes the slot of the least recently requested idle page that has gone unrequested for an hour, instead of being refused until restart. Pages that are queued, rendering, waiting for a purge or withdrawn keep their slots. The evicted page's snapshot is deleted, so request-driven snapshots stay within the allowance. `/status` reports `request_evictions`.
 
-**New settings.** `ignore_query_params` keeps utm_*, gclid, fbclid and msclkid out of the snapshot identity, so tracking links share one snapshot. `bypass_paths` replaces the fixed `/api` prefix, for apps that also use `/graphql`, `/wp-json` or similar. Existing config files keep working: all three new settings have defaults.
+**New settings.** `ignore_query_params` keeps the standard utm_ parameters, gclid, fbclid and msclkid out of the snapshot identity, so tracking links share one snapshot. `bypass_paths` replaces the fixed `/api` prefix, for apps that also use `/graphql`, `/wp-json` or similar. Existing config files keep working: all three new settings have defaults.
 
 **Caching.** Assets and bypassed paths no longer get `Vary: User-Agent, Cookie`, so a CDN in front can cache them normally.
 

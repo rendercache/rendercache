@@ -99,9 +99,9 @@ Stored responses use `Cache-Control: private, no-cache` and vary on User-Agent, 
 
 Redirects preserve their original status and location without fetching the destination. Origin-host locations are mapped back to the public hostname, with fragments retained; valid external HTTP(S) locations are preserved without allowing browser navigation to them. Persisted removals return 404/410 with an empty body. Redirect/removal records refresh on the same schedule as HTML, allowing recovery when a page returns.
 
-Request-driven pages have a separate `request_page_limit` allowance (default 256). They cannot evict the sitemap set and remain deduplicated across rediscovery. Retired in-flight sitemap jobs are bounded by the queue/workers and can finish. Once the allowance is full, a new URL takes the slot of the least recently requested idle page. Pages that are queued, rendering, waiting for a purge or withdrawn as private keep their slots; only when every slot is busy does a new cold URL proxy without rendering and a purge for it return 429. An evicted page's snapshot stays on disk and is still served; it just stops being refreshed until a crawler asks for it again. Slots reset on restart and do not impose a disk quota. Sitemap coverage counts stay separate from request-driven pages, which have their own count, eviction counter and rejection counter.
+Request-driven pages have a separate `request_page_limit` allowance (default 256). They cannot evict the sitemap set and remain deduplicated across rediscovery. Retired in-flight sitemap jobs are bounded by the queue/workers and can finish. Once the allowance is full, a new URL takes the slot of the least recently requested idle page, but only one that has not been requested for an hour (or for `warm_interval`, if shorter). So crawler traffic can make Chrome render at most `request_page_limit` new pages an hour. Pages that are queued, rendering, waiting for a purge or withdrawn as private keep their slots. When no slot can be freed, a new cold URL proxies without rendering and a purge for it returns 429. An evicted page's snapshot is deleted, so request-driven snapshots on disk never exceed the allowance; the page is rendered again if a crawler asks for it later. Slots reset on restart; snapshots left from before a restart count toward the snapshot quota until pruned. Sitemap coverage counts stay separate from request-driven pages, which have their own count, eviction counter and rejection counter.
 
-Tracking parameters listed in `ignore_query_params` (utm_*, gclid, fbclid and msclkid by default) are dropped from the snapshot identity, so `/story?id=7&utm_source=x` is served the snapshot of `/story?id=7` and does not use a slot of its own. Other parameters keep their order and escaping. The origin still receives the full URL on a miss.
+Tracking parameters listed in `ignore_query_params` (the five utm_ parameters source, medium, campaign, term and content, plus gclid, fbclid and msclkid, by default) are dropped from the snapshot identity, so `/story?id=7&utm_source=x` is served the snapshot of `/story?id=7` and does not use a slot of its own. Other parameters keep their order and escaping. The origin still receives the full URL on a miss.
 
 Purge is available only on the administration listener and always requires a configured token, including on loopback. Set the token in the environment before starting `serve`:
 
@@ -146,7 +146,7 @@ The endpoint accepts exactly one public URL (or root-relative path) and returns 
 | `render_allow_origins` | empty | Additional explicit HTTP(S) asset roots |
 | `snapshot_enabled` | `true` | Serve saved responses to eligible bots |
 | `snapshot_ttl` | `24h` | HTTP freshness age, minimum 1s |
-| `request_page_limit` | 256 | Request-driven page allowance with least-recently-requested eviction, range 1–10000 |
+| `request_page_limit` | 256 | Request-driven page allowance, range 1–10000; a page unrequested for an hour can be evicted |
 | `warm_enabled` | `true` | Enable warming while serving |
 | `sitemap_urls` | `["/sitemap.xml"]` | Public root sitemap URLs/paths |
 | `warm_interval` | `24h` | Snapshot refresh age; minimum 1s |
@@ -167,7 +167,7 @@ The endpoint accepts exactly one public URL (or root-relative path) and returns 
 | `shutdown_timeout` | `10s` | Graceful shutdown deadline |
 | `bots` | search, AI and preview crawler patterns, including Google-InspectionTool for Search Console tests | Case-insensitive user-agent substring matches |
 | `bypass_paths` | `["/api"]` | Path prefixes that always go to the origin, for example `/graphql` or `/wp-json` |
-| `ignore_query_params` | utm_*, gclid, fbclid, msclkid | Query parameters left out of the snapshot identity, case-insensitive |
+| `ignore_query_params` | utm_source, utm_medium, utm_campaign, utm_term, utm_content, gclid, fbclid, msclkid | Exact parameter names left out of the snapshot identity, case-insensitive (no wildcards). Also applied to purge and compare |
 | `trusted_proxies` | `["127.0.0.0/8", "::1/128"]` | Peers whose X-Forwarded-For/Proto/Host are passed to the origin |
 
 Every admin route requires `Authorization: Bearer <token>` or HTTP Basic authentication (username `rendercache`, password the token) when a token is configured. Browsers receive a Basic challenge. Use HTTPS or a local tunnel for remote administration; Basic and bearer credentials both require transport protection. Use the environment variable rather than committing a real token. `/healthz` reports process health; `/status` reports routing counters and reports warming status and whether automatic warming is enabled; shows whether snapshot serving is enabled. These endpoints are not mounted on the public listener. Public `/status` requests still go to the origin.
@@ -202,7 +202,7 @@ Startup fails if the log cannot be opened. Runtime logging failures do not stall
 
 ## Downloads and platforms
 
-Binaries for Linux (amd64), macOS (Apple silicon) and Windows (amd64) are on the [releases page](https://github.com/rendercache/rendercache/releases). Archive names don't change between releases, so these links always fetch the newest one:
+Binaries for Linux (amd64), macOS (Apple silicon) and Windows (amd64) are on the [releases page](https://github.com/rendercache/rendercache/releases). Archive names don't change between releases, so these links always fetch the newest stable release (GitHub skips alpha and other prereleases here; find those on the releases page):
 
 - https://github.com/rendercache/rendercache/releases/latest/download/rendercache_linux_amd64.tar.gz
 - https://github.com/rendercache/rendercache/releases/latest/download/rendercache_darwin_arm64.tar.gz
@@ -211,7 +211,7 @@ Binaries for Linux (amd64), macOS (Apple silicon) and Windows (amd64) are on the
 
 Check the archive with `sha256sum -c SHA256SUMS` (or `shasum -a 256 -c` on macOS, `Get-FileHash` on Windows) before running it. Chrome or Chromium is installed separately; the Dockerfile installs Chromium. Source builds need Go 1.26 or later; releases are built with Go 1.27.2.
 
-On every platform, files in the data directory are opened without following links, one process owns the directory through a lock, and a snapshot is replaced only by a complete copy. Linux and macOS sync the directory after each change. Windows can't sync a directory, so renames use write-through instead; deletions rely on NTFS journaling.
+On every platform, files in the data directory are opened without following links, one process owns the directory through a lock, and a snapshot is replaced only by a complete copy. Linux and macOS sync the directory after each change. Windows can't sync a directory, so it relies on NTFS journaling: after a crash the old or the new snapshot is there, never a partial one, but the latest refresh may be lost on power failure.
 
 Releases are automatic. When CI passes on main for a version that has no tag yet, the release workflow builds each platform's archive, runs it against real Chrome, and only then tags the commit and publishes the release with SHA256SUMS.
 

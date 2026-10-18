@@ -34,8 +34,13 @@ type Options struct {
 	MaxPages          int
 	Tick              time.Duration
 	MaxExtraPages     int
-	Site              string
-	Origin            string
+	// EvictAfter is how long a request-driven page must go unrequested before a
+	// new URL may take its slot. It bounds how many new pages crawler traffic can
+	// render: at most MaxExtraPages per EvictAfter. Defaults to the refresh
+	// interval, capped at one hour.
+	EvictAfter time.Duration
+	Site       string
+	Origin     string
 }
 type entry struct {
 	page        target.Page
@@ -115,6 +120,7 @@ type Manager struct {
 	failures       uint64
 	rejected       uint64
 	evicted        uint64
+	dropped        []target.Page
 }
 
 func New(o Options, source Discoverer, engine render.Engine, store Store) (*Manager, error) {
@@ -124,7 +130,10 @@ func New(o Options, source Discoverer, engine render.Engine, store Store) (*Mana
 	if o.Tick == 0 {
 		o.Tick = time.Second
 	}
-	if source == nil || engine == nil || store == nil || o.RefreshInterval <= 0 || o.DiscoveryInterval <= 0 || o.RetryBase <= 0 || o.RetryMax < o.RetryBase || o.MaxExtraPages < 1 || o.MaxExtraPages > 10000 || o.Workers < 1 || o.Workers > 16 || o.QueueSize < 1 || o.MaxPages < 1 || o.Tick <= 0 {
+	if o.EvictAfter == 0 {
+		o.EvictAfter = min(o.RefreshInterval, time.Hour)
+	}
+	if source == nil || engine == nil || store == nil || o.RefreshInterval <= 0 || o.DiscoveryInterval <= 0 || o.RetryBase <= 0 || o.RetryMax < o.RetryBase || o.MaxExtraPages < 1 || o.MaxExtraPages > 10000 || o.Workers < 1 || o.Workers > 16 || o.QueueSize < 1 || o.MaxPages < 1 || o.Tick <= 0 || o.EvictAfter < 0 {
 		return nil, errors.New("invalid warming options")
 	}
 	return &Manager{opts: o, source: source, engine: engine, store: store, entries: map[string]*entry{}, extras: map[string]*entry{}, retired: map[string]*entry{}, jobs: make(chan *entry, o.QueueSize), wake: make(chan struct{}, 1)}, nil
@@ -298,6 +307,7 @@ func (m *Manager) schedule(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
+		m.dropEvicted()
 		m.dispatch(time.Now())
 		select {
 		case <-ctx.Done():
@@ -590,18 +600,19 @@ func (m *Manager) Request(p target.Page, reason string) (string, error) {
 }
 
 // makeRoom frees one request-page slot when the allowance is full by dropping
-// the least recently requested idle entry. Its snapshot stays on disk and can
-// still be served; it is only no longer refreshed until requested again.
-// Entries with queued, running, pending-purge or withdrawn state are kept.
-// The caller holds m.mu.
+// the least recently requested idle entry that has gone unrequested for at
+// least EvictAfter. Its snapshot is deleted by the scheduler, so request-driven
+// snapshots on disk stay within the allowance. Entries with queued, running,
+// pending-purge or withdrawn state are kept. The caller holds m.mu.
 func (m *Manager) makeRoom() bool {
 	if len(m.extras) < m.opts.MaxExtraPages {
 		return true
 	}
 	var oldestKey string
 	var oldest *entry
+	cutoff := time.Now().Add(-m.opts.EvictAfter)
 	for key, e := range m.extras {
-		if e.queued || e.active || e.rerun || e.force || e.withdrawn {
+		if e.queued || e.active || e.rerun || e.force || e.withdrawn || e.lastRequest.After(cutoff) {
 			continue
 		}
 		if oldest == nil || e.lastRequest.Before(oldest.lastRequest) {
@@ -612,8 +623,28 @@ func (m *Manager) makeRoom() bool {
 		return false
 	}
 	delete(m.extras, oldestKey)
+	m.dropped = append(m.dropped, oldest.page)
 	m.evicted++
 	return true
+}
+
+// dropEvicted deletes the snapshots of evicted pages that nobody has asked for
+// again. It runs in the scheduler goroutine before dispatch, so a page that is
+// requested again after the check cannot be rendered before its old snapshot
+// is gone.
+func (m *Manager) dropEvicted() {
+	m.mu.Lock()
+	pages := []target.Page{}
+	for _, p := range m.dropped {
+		if m.lookup(p.Key()) == nil {
+			pages = append(pages, p)
+		}
+	}
+	m.dropped = nil
+	m.mu.Unlock()
+	for _, p := range pages {
+		_ = m.store.Delete(p)
+	}
 }
 func (m *Manager) Observe(p target.Page, record snapshot.Record) {
 	m.mu.Lock()

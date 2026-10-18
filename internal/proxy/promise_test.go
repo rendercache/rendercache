@@ -81,7 +81,8 @@ func TestOriginDownStillServesSavedPages(t *testing.T) {
 			served++
 		}
 	}
-	waitFor(t, func() bool { return attempts.Load() >= 1 })
+	// Let the background refresh fail and retry a few times before checking.
+	waitFor(t, func() bool { return attempts.Load() >= 3 })
 	if record, err := s.Load(p); err != nil || record.Result.HTML != "<h1>saved article</h1>" {
 		t.Fatal("failed refresh removed or changed the saved copy", err)
 	}
@@ -106,14 +107,26 @@ func TestCrawlerNeverWaitsForBrowser(t *testing.T) {
 	g, s, dir, _ := gatewayWithOrigin(t)
 	saveStale(t, g, s, dir, "/saved", "<h1>saved</h1>")
 	stuck := make(chan struct{})
+	entered := make(chan struct{}, 1)
 	t.Cleanup(func() { close(stuck) })
 	attach(t, g, s, func(ctx context.Context, p target.Page) (render.Result, error) {
+		select {
+		case entered <- struct{}{}:
+		default:
+		}
 		select {
 		case <-stuck:
 		case <-ctx.Done():
 		}
 		return render.Result{}, ctx.Err()
 	}, 8)
+	// Start a render and wait until Chrome is stuck in it before measuring.
+	bot(g, "GET", "/saved", nil)
+	select {
+	case <-entered:
+	case <-time.After(15 * time.Second):
+		t.Fatal("renderer never started")
+	}
 	const requests = 100
 	var slowest time.Duration
 	for i := range requests {

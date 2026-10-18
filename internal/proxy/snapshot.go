@@ -84,7 +84,7 @@ func (g *Gateway) snapshot(w http.ResponseWriter, r *http.Request, route Route) 
 	return true
 }
 
-// snapshotURI drops configured tracking parameters (utm_*, gclid and similar)
+// snapshotURI drops configured tracking parameters (utm_source, gclid and similar)
 // so query variants share one snapshot. Remaining parameters keep their
 // original order and escaping. The origin still receives the full URL on a miss.
 func (g *Gateway) snapshotURI(uri string) string {
@@ -107,6 +107,20 @@ func (g *Gateway) snapshotURI(uri string) string {
 		return path
 	}
 	return path + "?" + strings.Join(kept, "&")
+}
+
+// mapPage maps an admin-supplied URL (purge, compare) to the same page a
+// crawler request for it would use, with ignored query parameters removed.
+func (g *Gateway) mapPage(raw string) (target.Page, error) {
+	p, err := target.Map(g.cfg.SiteURL(), g.cfg.Origin, raw)
+	if err != nil {
+		return p, err
+	}
+	u, err := url.Parse(p.URL)
+	if err != nil {
+		return p, err
+	}
+	return target.Map(g.cfg.SiteURL(), g.cfg.Origin, g.snapshotURI(u.RequestURI()))
 }
 func notModified(r *http.Request, etag string, created time.Time) bool {
 	if value := r.Header.Get("If-None-Match"); value != "" {
@@ -144,7 +158,7 @@ func (g *Gateway) purge(w http.ResponseWriter, r *http.Request) {
 		failure(400, "exactly one url is required")
 		return
 	}
-	p, err := target.Map(g.cfg.SiteURL(), g.cfg.Origin, query.Get("url"))
+	p, err := g.mapPage(query.Get("url"))
 	if err != nil {
 		failure(400, "URL is outside the configured public site")
 		return

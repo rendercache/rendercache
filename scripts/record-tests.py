@@ -106,7 +106,13 @@ def record(annotate):
             for text in lines[-6:]:
                 print(f"::error title=go test {goos}::{key}: {text[:900]}")
         print(f"::notice title=test-results {goos}-{goarch}::{json.dumps(report, separators=(',', ':'))}")
-    if code == 0 and failed:
+    broken = [p["test"] for p in promises if p["status"] in ("fail", "missing")
+              or (p["status"] == "skip" and report["real_chrome"])]
+    for name in broken:
+        print(f"promise test {name} did not pass")
+        if annotate:
+            print(f"::error title=promise {goos}::{name} did not pass")
+    if code == 0 and (failed or broken):
         code = 1
     return code
 

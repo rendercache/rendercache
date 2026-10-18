@@ -24,15 +24,15 @@ The project follows the owner's low maintenance workflow: Claude does the code, 
 ## Code and tests
 
 - `gofmt`, `go vet` and `go test -race ./...` must pass. Set RENDERCACHE_TEST_CHROME to a Chrome executable to include the real-browser tests (and RENDERCACHE_TEST_NO_SANDBOX=1 only where the sandbox cannot run, such as the Linux CI runner).
-- Platform code lives in internal/localfs: Linux and macOS share files_unix.go; Windows has files_windows.go. Every file the service opens in its data directory goes through localfs.
+- Platform code lives in internal/localfs: Linux and macOS share files_unix.go; Windows has files_windows.go. Snapshot records, the lock file and the delivery log are opened and renamed through localfs.
 - `python3 scripts/record-tests.py` runs the suite and writes test/results/<os>-<arch>.json; `--summarize` rebuilds test/results/README.md. CI runs it on Linux, macOS and Windows and prints each platform's results as a `test-results` notice annotation, so results can be copied into test/results from the CI run. Every number on rendercache.com comes from these files. The promise tests are listed in that script.
 - Before calling a feature done: an independent review by a separate agent, fixes, then a fresh recording.
 - When CI fails, read the job annotations: `gh api repos/rendercache/rendercache/check-runs/JOB_ID/annotations`. Failing tests are annotated with their messages.
 
 ## Releases
 
-- To release, raise VERSION (and `version` in cmd/rendercache/main.go and the Dockerfile ARG) on main and update docs/release-notes.md. When CI passes on that commit, .github/workflows/release.yml sees a version with no tag, builds and smoke-tests the Linux amd64, macOS arm64 and Windows amd64 archives, then tags the commit and publishes "RenderCache vX.Y.Z" with SHA256SUMS. Nothing is published unless every build passes.
-- Archive names carry no version, so https://github.com/rendercache/rendercache/releases/latest/download/rendercache_linux_amd64.tar.gz (and the darwin and windows equivalents) always point at the newest release.
+- To release, raise VERSION (and `version` in cmd/rendercache/main.go and the Dockerfile ARG) on main and update docs/release-notes.md. When CI passes on that commit, .github/workflows/release.yml sees a version with no tag, builds the Linux amd64, macOS arm64 and Windows amd64 archives once on Linux, smoke-tests each on its own system, then tags the commit and publishes "RenderCache vX.Y.Z" with SHA256SUMS. Nothing is published unless every build passes.
+- Archive names carry no version, so https://github.com/rendercache/rendercache/releases/latest/download/rendercache_linux_amd64.tar.gz (and the darwin and windows equivalents) always point at the newest stable release. GitHub's latest link skips prereleases (versions with a hyphen).
 - After a release: check the run, download an archive, verify SHA256SUMS and run the binary; update rendercache.com where it states the version; add the softdevstudio.com note.
 
 ## Site

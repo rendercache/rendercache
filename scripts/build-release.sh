@@ -5,7 +5,7 @@
 # releases/latest/download links stay valid from one release to the next.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-version=$(cat VERSION)
+version=$(tr -d '\r\n' < VERSION)
 [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-z0-9.]+)?$ ]] || { echo 'Invalid VERSION' >&2; exit 1; }
 commit=$(git rev-parse HEAD)
 output=${1:-dist}

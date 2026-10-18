@@ -95,7 +95,7 @@ func (g *Gateway) demoPage(w http.ResponseWriter, r *http.Request) (target.Page,
 		failure(w, 400, "one URL is required")
 		return target.Page{}, false
 	}
-	p, err := target.Map(g.cfg.SiteURL(), g.cfg.Origin, input.URL)
+	p, err := g.mapPage(input.URL)
 	if err != nil {
 		failure(w, 400, "URL is outside the configured public site")
 		return target.Page{}, false

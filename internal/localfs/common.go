@@ -4,7 +4,6 @@ package localfs
 import (
 	"errors"
 	"os"
-	"strings"
 )
 
 var errLocked = errors.New("data directory already locked by another RenderCache process")
@@ -33,7 +32,19 @@ func openLockFile(dir string) (*os.File, error) {
 	return OpenRegular(root, ".rendercache.lock", os.O_CREATE|os.O_RDWR)
 }
 
-// plainName reports whether name is a single path element inside the root.
-func plainName(name string) bool {
-	return name != "" && name != "." && name != ".." && !strings.ContainsAny(name, `/\:`)
+// sameAsName checks that f is the file name refers to without following links,
+// so a link swapped in between the checks is refused.
+func sameAsName(root *os.Root, name string, f *os.File) error {
+	opened, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	named, err := root.Lstat(name)
+	if err != nil {
+		return err
+	}
+	if !named.Mode().IsRegular() || !os.SameFile(opened, named) {
+		return errors.New("expected a regular file, not a link")
+	}
+	return nil
 }

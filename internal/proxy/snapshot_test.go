@@ -300,3 +300,12 @@ func TestTrackingParametersShareSnapshot(t *testing.T) {
 		}
 	}
 }
+
+// Purge and compare must address the same snapshot a crawler request uses.
+func TestAdminURLsIgnoreTrackingParams(t *testing.T) {
+	g, _, _, _ := cachedGateway(t)
+	p, err := g.mapPage("/story?id=7&utm_source=x&gclid=1")
+	if err != nil || p != mapped(g, "/story?id=7") {
+		t.Fatal(p, err)
+	}
+}

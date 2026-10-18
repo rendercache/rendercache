@@ -29,7 +29,11 @@ func TestRejectSymlinksInsideAndOutsideRoot(t *testing.T) {
 		t.Skip("symlinks unavailable here:", err)
 	}
 	os.Symlink(outside, filepath.Join(dir, "outer"))
-	for _, name := range []string{"inner", "outer"} {
+	// A relative link that stays inside the root is the case os.Root follows.
+	if err := os.Symlink("real", filepath.Join(dir, "relative")); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"inner", "outer", "relative"} {
 		if f, err := OpenRegular(root, name, os.O_RDONLY); err == nil {
 			f.Close()
 			t.Fatalf("symlink %s opened", name)

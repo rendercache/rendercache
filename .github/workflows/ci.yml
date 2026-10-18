@@ -1,6 +1,7 @@
 name: CI
 on:
   push:
+    branches: [main]
   pull_request:
 permissions:
   contents: read
@@ -26,6 +27,12 @@ jobs:
           node-version: '24'
       - if: runner.os == 'Linux'
         run: test -z "$(gofmt -l cmd internal examples)"
+      - if: runner.os == 'Linux'
+        name: VERSION matches the binary and the Dockerfile
+        run: |
+          version=$(tr -d '\r\n' < VERSION)
+          grep -qF "var version = \"$version\"" cmd/rendercache/main.go
+          grep -qF "ARG VERSION=$version" Dockerfile
       - run: go vet ./...
       - name: Locate Chrome for real rendering tests
         run: |
