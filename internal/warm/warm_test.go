@@ -255,8 +255,16 @@ func TestRefreshRunsOnSchedule(t *testing.T) {
 	m.Close()
 	mu.Lock()
 	defer mu.Unlock()
-	if len(calls) != 2 || calls[1].Sub(calls[0]) < o.RefreshInterval {
-		t.Fatal("refresh ran too early or duplicated", calls)
+	// A slow runner can finish a further, correctly spaced refresh before Close
+	// stops the manager, so check spacing rather than an exact count. An early or
+	// duplicated refresh shows up as a gap shorter than the interval.
+	if len(calls) < 2 {
+		t.Fatal("refresh did not run", calls)
+	}
+	for i := 1; i < len(calls); i++ {
+		if calls[i].Sub(calls[i-1]) < o.RefreshInterval {
+			t.Fatal("refresh ran too early or duplicated", calls)
+		}
 	}
 }
 
