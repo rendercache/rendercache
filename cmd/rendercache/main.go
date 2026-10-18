@@ -30,7 +30,7 @@ import (
 	"github.com/rendercache/rendercache/internal/warm"
 )
 
-var version = "0.1.0-alpha.1"
+var version = "0.1.0-alpha.2"
 var commit = "unknown"
 
 func main() {

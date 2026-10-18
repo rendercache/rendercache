@@ -12,7 +12,7 @@ The admin page on `127.0.0.1:9090` shows what a crawler gets next to the raw HTM
 
 A self-hosted pre-render cache for JavaScript sites, designed to prepare HTML before bots and AI crawlers arrive.
 
-**Alpha prototype — 0.1.0-alpha.1, Linux amd64.** RenderCache warms JavaScript pages from sitemaps, stores rendered responses and serves them to recognized crawler claims. Humans receive the ordinary app. Fresh snapshots return `HIT`; expired snapshots return `STALE` while a deduplicated refresh runs in the background. A cold `MISS` proxies the origin immediately and requests background rendering. The protected admin page compares raw HTML with a saved snapshot, highlights missing text and shows rotating delivery receipts. Snapshot quotas, explicit prune, process locking, constrained HTTP work and Docker/deployment/release packaging are included. This is an evaluation alpha, not a production-readiness claim.
+**Alpha prototype — 0.1.0-alpha.2, Linux amd64.** RenderCache warms JavaScript pages from sitemaps, stores rendered responses and serves them to recognized crawler claims. Humans receive the ordinary app. Fresh snapshots return `HIT`; expired snapshots return `STALE` while a deduplicated refresh runs in the background. A cold `MISS` proxies the origin immediately and requests background rendering. The protected admin page compares raw HTML with a saved snapshot, highlights missing text and shows rotating delivery receipts. Snapshot quotas, explicit prune, process locking, constrained HTTP work and Docker/deployment/release packaging are included. This is an evaluation alpha, not a production-readiness claim.
 
 ## Run the current checkpoint
 
@@ -212,7 +212,7 @@ Session 5 complete: raw-versus-rendered shell detection, rotating crawler delive
 
 Session 6: quota/cleanup and file confinement, process locking, total HTTP deadlines/admission/body limits, a non-root Chromium image, nginx/Cloudflare examples, and gated deterministic Linux amd64 prerelease artifacts. See [deployment and release verification](docs/deployment.md) for controls, verification boundaries and operational limits.
 
-Lightpanda, BareProxy integration, hosted billing and framework-specific plugins are deferred. Project website: https://RenderCache.com (domain connection pending).
+Lightpanda, BareProxy integration, hosted billing and framework-specific plugins are deferred. Project website: https://rendercache.com.
 
 ## Builds and deployment
 

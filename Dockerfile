@@ -4,7 +4,7 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-ARG VERSION=0.1.0-alpha.1
+ARG VERSION=0.1.0-alpha.2
 ARG COMMIT=unknown
 RUN CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags="-s -w -buildid= -X main.version=${VERSION} -X main.commit=${COMMIT}" -o /out/rendercache ./cmd/rendercache
 

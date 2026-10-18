@@ -1,6 +1,6 @@
 # RenderCache — resume instructions
 
-Updated: 2026-10-17. Current checkpoint: engine sessions 1–6 complete and v0.1.0-alpha.1 published; session 7 website source published; session 8 review fixes committed (see below). PAUSED. Resume only upon user command.
+Updated: 2026-10-17. Current checkpoint: engine sessions 1–6 complete and v0.1.0-alpha.1 published; session 7 website source published; session 8 review fixes released as v0.1.0-alpha.2 (see below). rendercache.com is live. PAUSED. Resume only upon user command.
 
 ## Authorization and repositories
 
@@ -98,7 +98,7 @@ The user asked for a review and then "fix all issues". Fixed:
 - Snapshot TTL and origin timeout are parsed once in proxy.New.
 - README opens with a short plain explanation and quick start.
 
-Verification in this session: the sandbox could not reach proxy.golang.org or golang.org/x/net. Go 1.26.2 was built from source. config, delivery, localfs, sitemap, target, snapshot, render (Chrome tests skipped, no browser), warm, cmd and examples passed `go test -race`. To compile the remaining packages without x/net, a local compile-only stub of x/net/html and netutil was used in a scratch copy: `go vet ./...` passed, and every proxy and warm test passed except those that depend on real HTML parsing (detect and the demo comparison), which need the real module. Cloudflare Worker tests pass under Node 22. Real-Chrome, nginx and container checks were not run here; CI must confirm them before any release.
+Verification in this session: the sandbox could not reach proxy.golang.org or golang.org/x/net. Go 1.26.2 was built from source. config, delivery, localfs, sitemap, target, snapshot, render (Chrome tests skipped, no browser), warm, cmd and examples passed `go test -race`. To compile the remaining packages without x/net, a local compile-only stub of x/net/html and netutil was used in a scratch copy: `go vet ./...` passed, and every proxy and warm test passed except those that depend on real HTML parsing (detect and the demo comparison), which need the real module. Cloudflare Worker tests pass under Node 22. Real-Chrome, nginx and container checks were not run here; CI must confirm them before any release. CI run 39090209259 passed all jobs on 07b2306 (tests with real Chrome, container, artifacts).
 
 ## Exact next session, only upon “Go”
 
