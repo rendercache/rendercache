@@ -41,13 +41,8 @@ rendercache.com keeps its Launch template unchanged; edit content and config val
 
 ## Current state
 
-v0.1.0-alpha.2 is the latest release (Linux only). Main now carries macOS and Windows support, per-platform CI, the automated release workflow and recorded tests; these have not been released yet.
+v0.2.0 is the latest release (Linux amd64, macOS arm64, Windows amd64), published on 2026-10-18 by the release workflow (run 39098005269) from commit d54c1a5. The releases/latest links resolve to it. test/results holds the recordings from CI run 39097621925. rendercache.com has the reference page, the 0.2.0 post, the how-it-is-tested post and the name post; softdevstudio.com has the 0.2.0 note.
 
 ## Next
 
-Agreed with the owner on 2026-10-18 when moving RenderCache onto the low maintenance workflow:
-
-1. Get CI green on Linux, macOS and Windows and copy each platform's recorded results into test/results.
-2. Independent review of the platform, release and test work; fix the findings and record again.
-3. Release 0.2.0 through the automated workflow.
-4. rendercache.com: reference page (settings and admin endpoints), a post on how RenderCache was tested (figures from test/results), a post on the name, download links pointing at releases/latest; then a softdevstudio.com note.
+The plan agreed with the owner on 2026-10-18 (move onto the low maintenance workflow, then release 0.2.0 for three platforms) is done. Nothing further is agreed yet. Propose the next plan to the owner before starting; candidates are Linux arm64 archives, a published container image and a fresh demo capture on the site.
