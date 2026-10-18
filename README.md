@@ -12,7 +12,7 @@ The admin page on `127.0.0.1:9090` shows what a crawler gets next to the raw HTM
 
 A self-hosted pre-render cache for JavaScript sites, designed to prepare HTML before bots and AI crawlers arrive.
 
-**Alpha prototype — 0.1.0-alpha.2, Linux amd64.** RenderCache warms JavaScript pages from sitemaps, stores rendered responses and serves them to recognized crawler claims. Humans receive the ordinary app. Fresh snapshots return `HIT`; expired snapshots return `STALE` while a deduplicated refresh runs in the background. A cold `MISS` proxies the origin immediately and requests background rendering. The protected admin page compares raw HTML with a saved snapshot, highlights missing text and shows rotating delivery receipts. Snapshot quotas, explicit prune, process locking, constrained HTTP work and Docker/deployment/release packaging are included. This is an evaluation alpha, not a production-readiness claim.
+**Alpha — Linux, macOS and Windows.** RenderCache warms JavaScript pages from sitemaps, stores rendered responses and serves them to recognized crawler claims. Humans receive the ordinary app. Fresh snapshots return `HIT`; expired snapshots return `STALE` while a deduplicated refresh runs in the background. A cold `MISS` proxies the origin immediately and requests background rendering. The protected admin page compares raw HTML with a saved snapshot, highlights missing text and shows rotating delivery receipts. Snapshot quotas, explicit prune, process locking, constrained HTTP work and Docker/deployment/release packaging are included. This is an evaluation alpha, not a production-readiness claim.
 
 ## Run the current checkpoint
 
@@ -200,25 +200,26 @@ Logging uses a 256-event nonblocking queue and one file writer, a 100-event in-m
 
 Startup fails if the log cannot be opened. Runtime logging failures do not stall responses or grow files beyond the configured rotation limit. Shutdown closes admission and drains with a two-second deadline; an unresponsive filesystem can leave the writer pending until process exit. Stderr lifecycle writes each have a 100 ms wait limit and report write failures/timeouts as a CLI error; final error output also has a bounded wait. Per-request upstream error text is omitted. Snapshots have independent durability guarantees; these delivery logs are best-effort operational records.
 
-## Prototype checkpoint
+## Downloads and platforms
 
-Session 2 complete: Chromium renderer, readiness/timeout controls, atomic disk snapshots, checksums and restart persistence. Chrome/Chromium is an external dependency for standalone binaries; the supplied Dockerfile installs it.
+Binaries for Linux (amd64), macOS (Apple silicon) and Windows (amd64) are on the [releases page](https://github.com/rendercache/rendercache/releases). Archive names don't change between releases, so these links always fetch the newest one:
 
-Session 3 complete: bounded sitemap/index/gzip discovery, scheduled warming, deduplicated bounded jobs, retry backoff and coverage status.
+- https://github.com/rendercache/rendercache/releases/latest/download/rendercache_linux_amd64.tar.gz
+- https://github.com/rendercache/rendercache/releases/latest/download/rendercache_darwin_arm64.tar.gz
+- https://github.com/rendercache/rendercache/releases/latest/download/rendercache_windows_amd64.zip
+- https://github.com/rendercache/rendercache/releases/latest/download/SHA256SUMS
 
-Session 4 complete: fresh/stale/cold serving, bounded refresh admission, HTTP validators, redirect/removal outcomes, privacy withdrawal and authenticated purge API.
+Check the archive with `sha256sum -c SHA256SUMS` (or `shasum -a 256 -c` on macOS, `Get-FileHash` on Windows) before running it. Chrome or Chromium is installed separately; the Dockerfile installs Chromium. Source builds need Go 1.26 or later; releases are built with Go 1.27.2.
 
-Session 5 complete: raw-versus-rendered shell detection, rotating crawler delivery receipts, bounded request-page error details and one protected status/demo page.
+On every platform, files in the data directory are opened without following links, one process owns the directory through a lock, and a snapshot is replaced only by a complete copy. Linux and macOS sync the directory after each change. Windows can't sync a directory, so renames use write-through instead; deletions rely on NTFS journaling.
 
-Session 6: quota/cleanup and file confinement, process locking, total HTTP deadlines/admission/body limits, a non-root Chromium image, nginx/Cloudflare examples, and gated deterministic Linux amd64 prerelease artifacts. See [deployment and release verification](docs/deployment.md) for controls, verification boundaries and operational limits.
-
-Lightpanda, BareProxy integration, hosted billing and framework-specific plugins are deferred. Project website: https://rendercache.com.
-
-## Builds and deployment
-
-The supported alpha artifact is Linux amd64; Chrome remains separately installed for the standalone binary. CI tests the extracted executable and compares two deterministic archive builds before a `Release v...` main-branch commit can publish a prerelease with SHA256SUMS. Ordinary commits upload verified artifacts without publishing. Source builds need Go 1.26 or later; the release toolchain is pinned to Go 1.27.2. Other operating systems are currently unsupported because secure file and lock operations are Linux-specific.
+Releases are automatic. When CI passes on main for a version that has no tag yet, the release workflow builds each platform's archive, runs it against real Chrome, and only then tags the commit and publishes the release with SHA256SUMS.
 
 The Docker image runs as UID 10001 with Chromium and tini. Its sandbox is enabled by default and requires host support. The isolated CI container smoke explicitly opts out of Chrome's sandbox under a private network and filesystem/resource restrictions; it does not verify sandbox operation on your host. Docker, nginx, Cloudflare routing and quota maintenance instructions are in [docs/deployment.md](docs/deployment.md). No domain, Worker or registry image is deployed automatically.
+
+## How it's tested
+
+CI runs the full suite with the race detector and real Chrome on Linux, macOS and Windows, then smoke-tests the built executable on each. `python3 scripts/record-tests.py` runs the same suite and records the results per platform in [test/results](test/results). Besides ordinary tests it checks RenderCache's main promises, among them: a process killed in the middle of saving never leaves a damaged snapshot, crawlers keep getting the saved copy while the origin is down, and no crawler waits for Chrome.
 
 ## Development
 
@@ -235,9 +236,9 @@ Real-browser tests run when `RENDERCACHE_TEST_CHROME` names an executable. They 
 RENDERCACHE_TEST_CHROME=/path/to/chrome go test -race ./...
 ```
 
-Only if the test environment requires an explicit sandbox opt-out, also set `RENDERCACHE_TEST_NO_SANDBOX=1`. CI locates Chrome and runs these tests in its isolated runner.
+Only if the test environment requires an explicit sandbox opt-out, also set `RENDERCACHE_TEST_NO_SANDBOX=1`.
 
-Read [RESUME.md](RESUME.md) before continuing development. This checkpoint is foundation code, not a production-ready rendering service.
+[CLAUDE.md](CLAUDE.md) describes how the project is run and what comes next. [docs/history.md](docs/history.md) records how it was built. Lightpanda, BareProxy integration, hosted billing and framework-specific plugins are not planned features. Project website: https://rendercache.com.
 
 ## License
 

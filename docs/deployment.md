@@ -1,6 +1,6 @@
-# RenderCache deployment (Linux alpha)
+# RenderCache deployment
 
-The supported release target is Linux amd64. Install a maintained Chrome/Chromium separately for the standalone binary, or build the supplied Dockerfile. Other operating systems are not supported in this alpha: secure file opening and directory locking currently require Linux. Do not treat the browser network guard as an OS sandbox. Keep your app's public/canonical URL configured correctly: the browser renders the fixed origin directly and sees its hostname.
+Release archives cover Linux amd64, macOS arm64 and Windows amd64. Install a maintained Chrome/Chromium separately for the standalone binary, or build the supplied Dockerfile. Secure file opening, directory locking and atomic snapshot replacement work on all three; on Windows, renames are made durable with write-through because directories cannot be synced. Do not treat the browser network guard as an OS sandbox. Keep your app's public/canonical URL configured correctly: the browser renders the fixed origin directly and sees its hostname.
 
 ## Standalone service
 
@@ -67,4 +67,6 @@ References used for the examples: nginx map/proxy modules (`https://nginx.org/en
 
 ## Release verification
 
-`bash scripts/build-release.sh` writes the Linux amd64 binary archive and SHA256SUMS under `dist`. Two builds from identical source and Go 1.27.2 are compared in CI, then the extracted binary is exercised with a real browser. Go dependencies are checksum-pinned. The CI also tests Docker/Chromium and nginx before uploading artifacts. A main-branch commit whose message begins `Release v` publishes those already verified assets as a prerelease and creates the matching source tag; ordinary commits do not publish releases. No registry image or non-Linux binary is published. Download source and binaries from the same tag.
+`bash scripts/build-release.sh dist [GOOS GOARCH]` writes one deterministic archive (`rendercache_<os>_<arch>.tar.gz`, or `.zip` for Windows) and its SHA256SUMS line under `dist`. CI builds the Linux, macOS and Windows archives twice from identical source with Go 1.27.2 and compares them, and exercises the extracted Linux binary with a real browser, Docker/Chromium and nginx. Go dependencies are checksum-pinned.
+
+Releases are published by `.github/workflows/release.yml`. After CI passes on a push to main whose VERSION has no tag yet, it builds each platform's archive on that platform, runs the extracted executable against real Chrome, then tags the commit and publishes the release with a combined SHA256SUMS. Archive names carry no version, so `releases/latest/download/<archive>` links stay valid.

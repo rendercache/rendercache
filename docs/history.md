@@ -1,4 +1,6 @@
-# RenderCache — resume instructions
+# RenderCache — session history (sessions 1 to 8)
+
+This is a historical record of how RenderCache was built up to v0.1.0-alpha.2. It is not a set of instructions: CLAUDE.md in the repository root replaced it and AGENTS.md on 2026-10-18, when the project moved onto the low maintenance workflow.
 
 Updated: 2026-10-17. Current checkpoint: engine sessions 1–6 complete and v0.1.0-alpha.1 published; session 7 website source published; session 8 review fixes released as v0.1.0-alpha.2 (see below). rendercache.com is live. PAUSED. Resume only upon user command.
 
