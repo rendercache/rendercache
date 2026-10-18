@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//go:build !linux
+//go:build !linux && !darwin && !windows
 
 package localfs
 
@@ -8,9 +8,9 @@ import (
 	"os"
 )
 
-func OpenRegular(*os.Root, string, int) (*os.File, error) {
-	return nil, errors.New("secure file operations currently support Linux only")
-}
-func Lock(string) (func(), error) {
-	return nil, errors.New("RenderCache currently supports Linux only")
-}
+var errUnsupported = errors.New("RenderCache supports Linux, macOS and Windows")
+
+func OpenRegular(*os.Root, string, int) (*os.File, error) { return nil, errUnsupported }
+func Lock(string) (func(), error)                         { return nil, errUnsupported }
+func Rename(*os.Root, string, string) error               { return errUnsupported }
+func SyncDir(*os.Root) error                              { return errUnsupported }

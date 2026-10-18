@@ -6,7 +6,14 @@ permissions:
   contents: read
 jobs:
   test:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -14,20 +21,25 @@ jobs:
           go-version: '1.27.2'
           cache: true
       - uses: actions/setup-node@v4
+        if: runner.os == 'Linux'
         with:
           node-version: '24'
-      - run: test -z "$(gofmt -l cmd internal examples)"
+      - if: runner.os == 'Linux'
+        run: test -z "$(gofmt -l cmd internal examples)"
       - run: go vet ./...
       - name: Locate Chrome for real rendering tests
-        shell: bash
         run: |
-          chrome_path=$(command -v google-chrome || command -v chromium || command -v chromium-browser)
-          test -n "$chrome_path"
+          case "$RUNNER_OS" in
+            Linux) chrome_path=$(command -v google-chrome || command -v chromium || command -v chromium-browser) ;;
+            macOS) chrome_path="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" ;;
+            Windows) chrome_path="C:/Program Files/Google/Chrome/Application/chrome.exe" ;;
+          esac
+          test -n "$chrome_path" && test -e "$chrome_path"
           echo "RENDERCACHE_TEST_CHROME=$chrome_path" >> "$GITHUB_ENV"
+          # The Linux runner cannot use Chrome's sandbox; macOS and Windows keep it on.
+          if [ "$RUNNER_OS" = Linux ]; then echo "RENDERCACHE_TEST_NO_SANDBOX=1" >> "$GITHUB_ENV"; fi
+          if [ "$RUNNER_OS" = Windows ]; then echo "PYTHON=python" >> "$GITHUB_ENV"; else echo "PYTHON=python3" >> "$GITHUB_ENV"; fi
       - name: Run go test -race ./...
-        env:
-          RENDERCACHE_TEST_NO_SANDBOX: '1'
-        shell: bash
         run: |
           set -o pipefail
           status=0
@@ -35,19 +47,24 @@ jobs:
           if [ "$status" -ne 0 ]; then
             # Surface failures as annotations, readable through the API without downloading logs.
             grep -E -- '--- FAIL|^FAIL|panic:|_test\.go:[0-9]+:' go-test.log | head -40 | while IFS= read -r line; do
-              echo "::error title=go test::${line}"
+              echo "::error title=go test ${RUNNER_OS}::${line}"
             done
           fi
           exit "$status"
-      - run: node --test deploy/cloudflare/worker.test.mjs
-      - run: go build -o bin/rendercache ./cmd/rendercache
-      - name: Install nginx and test shipped routing against the real binary
+      - if: runner.os == 'Linux'
+        run: node --test deploy/cloudflare/worker.test.mjs
+      - name: Build and smoke-test the executable with real Chrome
         run: |
-          sudo apt-get update
-          sudo apt-get install -y nginx
-          python3 scripts/smoke.py --binary bin/rendercache --chrome "$RENDERCACHE_TEST_CHROME" --nginx /usr/sbin/nginx
-        env:
-          RENDERCACHE_TEST_NO_SANDBOX: '1'
+          binary=bin/rendercache
+          [ "$RUNNER_OS" = Windows ] && binary=bin/rendercache.exe
+          go build -o "$binary" ./cmd/rendercache
+          if [ "$RUNNER_OS" = Linux ]; then
+            sudo apt-get update
+            sudo apt-get install -y nginx
+            "$PYTHON" scripts/smoke.py --binary "$binary" --chrome "$RENDERCACHE_TEST_CHROME" --nginx /usr/sbin/nginx
+          else
+            "$PYTHON" scripts/smoke.py --binary "$binary" --chrome "$RENDERCACHE_TEST_CHROME"
+          fi
   container:
     runs-on: ubuntu-latest
     steps:
@@ -69,16 +86,17 @@ jobs:
           go-version: '1.27.2'
       - name: Build twice and compare deterministic archives
         run: |
-          bash scripts/build-release.sh dist
-          bash scripts/build-release.sh dist-repeat
+          for target in "linux amd64" "darwin arm64" "windows amd64"; do
+            bash scripts/build-release.sh dist $target
+            bash scripts/build-release.sh dist-repeat $target
+          done
           cmp dist/SHA256SUMS dist-repeat/SHA256SUMS
           cd dist
           sha256sum -c SHA256SUMS
-      - name: Verify archive executable with real browser
-        shell: bash
+      - name: Verify the Linux archive executable with real Chrome
         run: |
           mkdir -p binary-smoke
-          tar -xzf dist/rendercache_*_linux_amd64.tar.gz -C binary-smoke
+          tar -xzf dist/rendercache_linux_amd64.tar.gz -C binary-smoke
           binary-smoke/rendercache version
           chrome_path=$(command -v google-chrome || command -v chromium || command -v chromium-browser)
           python3 scripts/smoke.py --binary binary-smoke/rendercache --chrome "$chrome_path"
@@ -86,27 +104,6 @@ jobs:
           RENDERCACHE_TEST_NO_SANDBOX: '1'
       - uses: actions/upload-artifact@v4
         with:
-          name: linux-amd64-release
+          name: release-archives
           path: dist/*
           if-no-files-found: error
-  release:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && startsWith(github.event.head_commit.message, 'Release v')
-    needs: [test, container, artifacts]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          name: linux-amd64-release
-          path: dist
-      - name: Publish verified alpha assets and matching source tag
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          version=$(cat VERSION)
-          cd dist
-          sha256sum -c SHA256SUMS
-          cd ..
-          gh release create "v$version" dist/* --target "$GITHUB_SHA" --prerelease --title "RenderCache v$version" --notes-file docs/release-notes.md

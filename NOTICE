@@ -1,0 +1,11 @@
+RenderCache
+Copyright 2026 The RenderCache Authors
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+Binary releases include third-party components (the Go standard library and
+runtime, chromedp, cdproto, golang.org/x/net and go-json-experiment/json)
+under their own licenses, reproduced in THIRD_PARTY_LICENSES.md.
+
+RenderCache drives a separately installed Chrome or Chromium browser, which is
+not distributed with the standalone binaries.

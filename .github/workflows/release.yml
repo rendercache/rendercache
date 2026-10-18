@@ -1,0 +1,120 @@
+# Automated releases. When CI passes on a push to main and VERSION names a
+# version that has no tag yet, build and smoke-test the Linux, macOS and Windows
+# archives, then tag the commit and publish the release. Nothing is published
+# unless every build and smoke test passes. Uses the repository's own token.
+name: Release
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  check:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      release: ${{ steps.version.outputs.release }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - id: version
+        run: |
+          version=$(cat VERSION)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null; then
+            echo "v$version is already tagged; nothing to release."
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          fi
+  build:
+    needs: check
+    if: needs.check.outputs.release == 'true'
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - os: ubuntu-latest
+            goos: linux
+            goarch: amd64
+          - os: macos-latest
+            goos: darwin
+            goarch: arm64
+          - os: windows-latest
+            goos: windows
+            goarch: amd64
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.2'
+      - name: Build archive
+        run: |
+          if [ "$RUNNER_OS" = Windows ]; then export PYTHON=python; fi
+          bash scripts/build-release.sh dist ${{ matrix.goos }} ${{ matrix.goarch }}
+          mv dist/SHA256SUMS dist/sums-${{ matrix.goos }}-${{ matrix.goarch }}.txt
+      - name: Smoke-test the extracted executable with real Chrome
+        run: |
+          mkdir -p extracted
+          case "$RUNNER_OS" in
+            Linux)
+              tar -xzf dist/rendercache_linux_amd64.tar.gz -C extracted
+              binary=extracted/rendercache; py=python3
+              chrome=$(command -v google-chrome || command -v chromium || command -v chromium-browser)
+              export RENDERCACHE_TEST_NO_SANDBOX=1 ;;
+            macOS)
+              tar -xzf dist/rendercache_darwin_arm64.tar.gz -C extracted
+              binary=extracted/rendercache; py=python3
+              chrome="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" ;;
+            Windows)
+              unzip -q dist/rendercache_windows_amd64.zip -d extracted
+              binary=extracted/rendercache.exe; py=python
+              chrome="C:/Program Files/Google/Chrome/Application/chrome.exe" ;;
+          esac
+          "$binary" version | grep -F "rendercache ${{ needs.check.outputs.version }} "
+          "$py" scripts/smoke.py --binary "$binary" --chrome "$chrome"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/*
+          if-no-files-found: error
+  publish:
+    needs: [check, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+      - name: Verify checksums and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.check.outputs.version }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          cd dist
+          cat sums-*.txt | sort -k2 > SHA256SUMS
+          rm sums-*.txt
+          sha256sum -c SHA256SUMS
+          test "$(wc -l < SHA256SUMS)" -eq 3
+          cd ..
+          prerelease=()
+          case "$VERSION" in *-*) prerelease=(--prerelease) ;; esac
+          gh release create "v$VERSION" dist/* --target "$SHA" --title "RenderCache v$VERSION" \
+            --notes-file docs/release-notes.md "${prerelease[@]}"

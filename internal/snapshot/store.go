@@ -200,7 +200,7 @@ func (s *Store) Save(p target.Page, result render.Result) (Record, error) {
 	if err != nil {
 		return Record{}, err
 	}
-	if err = s.root.Rename(name, key); err != nil {
+	if err = localfs.Rename(s.root, name, key); err != nil {
 		return Record{}, err
 	}
 	s.bytes = nextBytes
@@ -268,12 +268,7 @@ func (s *Store) Delete(p target.Page) error {
 	return s.remove(p.Key() + ".json")
 }
 func (s *Store) sync() error {
-	dir, err := s.root.Open(".")
-	if err != nil {
-		return err
-	}
-	defer dir.Close()
-	return dir.Sync()
+	return localfs.SyncDir(s.root)
 }
 func (s *Store) remove(name string) error {
 	info, err := s.root.Lstat(name)

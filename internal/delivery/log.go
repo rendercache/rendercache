@@ -214,9 +214,9 @@ func (l *Log) rotate() error {
 		return err
 	}
 	for i := l.backups - 1; i >= 1; i-- {
-		if err := l.root.Rename(base+"."+strconv.Itoa(i), base+"."+strconv.Itoa(i+1)); err != nil && !os.IsNotExist(err) {
+		if err := localfs.Rename(l.root, base+"."+strconv.Itoa(i), base+"."+strconv.Itoa(i+1)); err != nil && !os.IsNotExist(err) {
 			return err
 		}
 	}
-	return l.root.Rename(base, base+".1")
+	return localfs.Rename(l.root, base, base+".1")
 }

@@ -82,7 +82,10 @@ with tempfile.TemporaryDirectory() as tmp:
         if args.chrome:
             subprocess.run([binary, 'render', '--config', str(config_path), '--url', '/'], check=True, stdout=subprocess.DEVNULL, env=env, timeout=35)
         with (folder/'stderr').open('w') as log:
-            process = subprocess.Popen([binary, 'serve', '--config', str(config_path)], stderr=log, stdout=subprocess.DEVNULL, env=env)
+            # Windows has no SIGTERM: start in its own process group so CTRL_BREAK,
+            # which Go delivers as os.Interrupt, can request a graceful shutdown.
+            flags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0
+            process = subprocess.Popen([binary, 'serve', '--config', str(config_path)], stderr=log, stdout=subprocess.DEVNULL, env=env, creationflags=flags)
         for _ in range(100):
             try:
                 if request(admin_url+'/healthz', headers=auth)[0] == 200:
@@ -129,7 +132,7 @@ with tempfile.TemporaryDirectory() as tmp:
         code, headers, body = request(public_url+'/a%2Fb?q=1&q=2', headers={'User-Agent': 'GPTBot'})
         assert code == 200 and headers.get('X-RenderCache') == 'MISS'
         assert observed_paths[-1] == '/a%2Fb?q=1&q=2', observed_paths
-        process.send_signal(signal.SIGTERM)
+        process.send_signal(signal.CTRL_BREAK_EVENT if os.name == 'nt' else signal.SIGTERM)
         assert process.wait(timeout=10) == 0, (folder/'stderr').read_text()
         if args.chrome:
             logs = [json.loads(line) for line in (folder/'data/delivery/crawler.jsonl').read_text().splitlines()]
