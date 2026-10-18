@@ -1,0 +1,92 @@
+{
+  "recorded_at": "2026-10-18T04:37:40Z",
+  "commit": "6bc0ddbf1e31da0e23ab3f44b209f719c032c939",
+  "go": "go1.27.2",
+  "os": "windows",
+  "arch": "amd64",
+  "os_version": "Windows-2025Server-10.0.26100-SP0",
+  "real_chrome": true,
+  "race_detector": true,
+  "packages": 12,
+  "tests": {
+    "passed": 85,
+    "failed": 0,
+    "skipped": 1
+  },
+  "promises": [
+    {
+      "test": "TestKilledWriterNeverCorruptsSnapshot",
+      "promise": "Killing the process during a save never leaves a damaged snapshot",
+      "status": "pass"
+    },
+    {
+      "test": "TestConcurrentAtomicReplace",
+      "promise": "Concurrent refreshes and reads never see a partial snapshot",
+      "status": "pass"
+    },
+    {
+      "test": "TestOriginDownStillServesSavedPages",
+      "promise": "With the origin down, crawlers still get the saved copy",
+      "status": "pass"
+    },
+    {
+      "test": "TestCrawlerNeverWaitsForBrowser",
+      "promise": "A crawler never waits for Chrome",
+      "status": "pass"
+    },
+    {
+      "test": "TestStaleIsImmediateAndRefreshDeduplicated",
+      "promise": "A stale page is served at once and refreshed only once",
+      "status": "pass"
+    },
+    {
+      "test": "TestFailedRefreshKeepsOldAndPrivateWithdraws",
+      "promise": "A failed refresh keeps the old copy, and a page that turns private is withdrawn",
+      "status": "pass"
+    },
+    {
+      "test": "TestFreshConditionalHeadAndPrivacyBypass",
+      "promise": "Requests with cookies or credentials never get a shared snapshot",
+      "status": "pass"
+    },
+    {
+      "test": "TestServeWarmsBeforeBotAndReusesDisk",
+      "promise": "Sitemap pages are rendered before the first crawler and survive a restart",
+      "status": "pass"
+    },
+    {
+      "test": "TestChromeRealRenderingAndNetworkPolicy",
+      "promise": "Chrome captures the finished page and off-origin requests are blocked",
+      "status": "pass"
+    },
+    {
+      "test": "TestRejectSymlinksInsideAndOutsideRoot",
+      "promise": "Data files never follow links",
+      "status": "pass"
+    },
+    {
+      "test": "TestExclusiveProcessLock",
+      "promise": "Only one process can own a data directory",
+      "status": "pass"
+    },
+    {
+      "test": "TestTrustedEdgeForwardingHeaders",
+      "promise": "Only a trusted edge can set forwarding headers for the origin",
+      "status": "pass"
+    }
+  ],
+  "results": {
+    "chrome_render_ms": 5552,
+    "crawler_requests_while_chrome_stuck": 100,
+    "kill_corrupt_snapshots": 0,
+    "kill_distinct_versions_seen": 9,
+    "kill_rounds": 60,
+    "kills_during_a_write": 49,
+    "off_origin_requests_blocked": 9,
+    "off_origin_requests_reaching_target": 0,
+    "origin_down_crawler_requests": 50,
+    "origin_down_served_from_saved_copy": 50,
+    "slowest_crawler_response_ms_while_chrome_stuck": 2
+  },
+  "ci_run": "https://github.com/rendercache/rendercache/actions/runs/39097621925"
+}

@@ -12,7 +12,7 @@ The admin page on `127.0.0.1:9090` shows what a crawler gets next to the raw HTM
 
 A self-hosted pre-render cache for JavaScript sites, designed to prepare HTML before bots and AI crawlers arrive.
 
-**Alpha — Linux, macOS and Windows.** RenderCache warms JavaScript pages from sitemaps, stores rendered responses and serves them to recognized crawler claims. Humans receive the ordinary app. Fresh snapshots return `HIT`; expired snapshots return `STALE` while a deduplicated refresh runs in the background. A cold `MISS` proxies the origin immediately and requests background rendering. The protected admin page compares raw HTML with a saved snapshot, highlights missing text and shows rotating delivery receipts. Snapshot quotas, explicit prune, process locking, constrained HTTP work and Docker/deployment/release packaging are included. This is an evaluation alpha, not a production-readiness claim.
+**Version 0.2.0 — Linux, macOS and Windows.** RenderCache warms JavaScript pages from sitemaps, stores rendered responses and serves them to recognized crawler claims. Humans receive the ordinary app. Fresh snapshots return `HIT`; expired snapshots return `STALE` while a deduplicated refresh runs in the background. A cold `MISS` proxies the origin immediately and requests background rendering. The protected admin page compares raw HTML with a saved snapshot, highlights missing text and shows rotating delivery receipts. Snapshot quotas, explicit prune, process locking, constrained HTTP work and Docker/deployment/release packaging are included. This is an early release for evaluation, not a production-readiness claim.
 
 ## Run the current checkpoint
 
