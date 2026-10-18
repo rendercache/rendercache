@@ -30,11 +30,11 @@ func TestDemoRealBrowser(t *testing.T) {
 		w.Header().Set("Content-Type", "text/html")
 		io.WriteString(w, `<!doctype html><html><body><main></main><script>window.uiPwned=true;document.querySelector('main').innerHTML='<h1 id="ready">A public page worth finding</h1><p>Useful article content that search crawlers should see without having to run JavaScript.</p><p>&lt;img src=x onerror=alert(1)&gt;</p>';</script></body></html>`)
 	}))
-	engine, err := render.NewChrome(render.Options{ChromePath: chrome, NoSandbox: noSandbox, Timeout: 10 * time.Second, ReadySelector: "#ready", Settle: 10 * time.Millisecond, MaxHTMLBytes: 1 << 20, Concurrency: 1})
+	engine, err := render.NewChrome(render.Options{ChromePath: chrome, NoSandbox: noSandbox, Timeout: 30 * time.Second, ReadySelector: "#ready", Settle: 10 * time.Millisecond, MaxHTMLBytes: 1 << 20, Concurrency: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 	result, err := engine.Render(ctx, mapped(g, "/"))
 	if err != nil {

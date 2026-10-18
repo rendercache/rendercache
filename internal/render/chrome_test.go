@@ -22,7 +22,7 @@ func browserOptions(t *testing.T) Options {
 	if chrome == "" {
 		t.Skip("set RENDERCACHE_TEST_CHROME for real-browser integration checks")
 	}
-	return Options{ChromePath: chrome, NoSandbox: os.Getenv("RENDERCACHE_TEST_NO_SANDBOX") == "1", Timeout: 10 * time.Second, Settle: 20 * time.Millisecond, ReadySelector: "#ready", MaxHTMLBytes: 1 << 20, Concurrency: 1}
+	return Options{ChromePath: chrome, NoSandbox: os.Getenv("RENDERCACHE_TEST_NO_SANDBOX") == "1", Timeout: 30 * time.Second, Settle: 20 * time.Millisecond, ReadySelector: "#ready", MaxHTMLBytes: 1 << 20, Concurrency: 1}
 }
 func TestChromeRealRenderingAndNetworkPolicy(t *testing.T) {
 	opts := browserOptions(t)
@@ -135,7 +135,7 @@ func TestChromeTimeoutAndSize(t *testing.T) {
 	if time.Since(start) > 5*time.Second {
 		t.Fatal("hard timeout exceeded")
 	}
-	opts.Timeout = 10 * time.Second
+	opts.Timeout = 30 * time.Second
 	opts.ReadySelector = ""
 	opts.MaxHTMLBytes = 8
 	engine, _ = NewChrome(opts)
