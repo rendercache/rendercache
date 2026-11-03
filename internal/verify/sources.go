@@ -10,13 +10,15 @@ type Source struct {
 	DNSSuffixes []string // reverse DNS names must end in one of these, and resolve back
 }
 
-// Builtin lists the methods the operators document. Lists that several
+// Builtin lists the methods the operators document. Googlebot's reverse DNS
+// is googlebot.com only: google.com names belong to Google's special-case
+// crawlers and user-triggered fetchers, which act for other people. Lists that several
 // agents share (Anthropic publishes one for all of its bots) are fetched once.
 // Sources checked 2026-11-03 on each operator's own page.
 var Builtin = []Source{
-	{Crawler: "Googlebot", RangesURL: googleCommon, DNSSuffixes: []string{"googlebot.com", "google.com"}},
-	{Crawler: "Google-InspectionTool", RangesURL: googleCommon, DNSSuffixes: []string{"googlebot.com", "google.com"}},
-	{Crawler: "GoogleOther", RangesURL: googleCommon, DNSSuffixes: []string{"googlebot.com", "google.com"}},
+	{Crawler: "Googlebot", RangesURL: googleCommon, DNSSuffixes: []string{"googlebot.com"}},
+	{Crawler: "Google-InspectionTool", RangesURL: googleCommon, DNSSuffixes: []string{"googlebot.com"}},
+	{Crawler: "GoogleOther", RangesURL: googleCommon, DNSSuffixes: []string{"googlebot.com"}},
 	{Crawler: "bingbot", RangesURL: "https://www.bing.com/toolbox/bingbot.json", DNSSuffixes: []string{"search.msn.com"}},
 	{Crawler: "DuckDuckBot", RangesURL: "https://duckduckgo.com/duckduckbot.json"},
 	{Crawler: "OAI-SearchBot", RangesURL: "https://openai.com/searchbot.json"},
@@ -25,8 +27,8 @@ var Builtin = []Source{
 	{Crawler: "ClaudeBot", RangesURL: anthropic},
 	{Crawler: "Claude-SearchBot", RangesURL: anthropic},
 	{Crawler: "Claude-User", RangesURL: anthropic},
-	{Crawler: "PerplexityBot", RangesURL: "https://www.perplexity.ai/perplexitybot.json"},
-	{Crawler: "Perplexity-User", RangesURL: "https://www.perplexity.ai/perplexity-user.json"},
+	{Crawler: "PerplexityBot", RangesURL: "https://www.perplexity.com/perplexitybot.json"},
+	{Crawler: "Perplexity-User", RangesURL: "https://www.perplexity.com/perplexity-user.json"},
 	{Crawler: "Applebot", RangesURL: "https://search.developer.apple.com/applebot.json", DNSSuffixes: []string{"applebot.apple.com"}},
 	{Crawler: "CCBot", RangesURL: "https://index.commoncrawl.org/ccbot.json", DNSSuffixes: []string{"crawl.commoncrawl.org"}},
 	{Crawler: "YandexBot", DNSSuffixes: []string{"yandex.ru", "yandex.net", "yandex.com"}},

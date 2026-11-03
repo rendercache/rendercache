@@ -22,7 +22,7 @@ func (g *Gateway) request(p target.Page, reason string) (string, error) {
 }
 func (g *Gateway) snapshot(w http.ResponseWriter, r *http.Request, set *settings, route Route) bool {
 	// Request Host/forwarding claims never select the namespace or origin.
-	p, err := target.Map(set.cfg.SiteURL(), set.cfg.Origin, g.snapshotURI(r.URL.RequestURI()))
+	p, err := target.Map(set.cfg.SiteURL(), set.cfg.Origin, snapshotURI(set, r.URL.RequestURI()))
 	if err != nil {
 		return false
 	}
@@ -87,8 +87,8 @@ func (g *Gateway) snapshot(w http.ResponseWriter, r *http.Request, set *settings
 // snapshotURI drops configured tracking parameters (utm_source, gclid and similar)
 // so query variants share one snapshot. Remaining parameters keep their
 // original order and escaping. The origin still receives the full URL on a miss.
-func (g *Gateway) snapshotURI(uri string) string {
-	ignored := g.conf().ignored
+func snapshotURI(set *settings, uri string) string {
+	ignored := set.ignored
 	path, query, ok := strings.Cut(uri, "?")
 	if !ok || len(ignored) == 0 {
 		return uri
@@ -113,7 +113,8 @@ func (g *Gateway) snapshotURI(uri string) string {
 // mapPage maps an admin-supplied URL (purge, compare) to the same page a
 // crawler request for it would use, with ignored query parameters removed.
 func (g *Gateway) mapPage(raw string) (target.Page, error) {
-	p, err := target.Map(g.conf().cfg.SiteURL(), g.conf().cfg.Origin, raw)
+	set := g.conf()
+	p, err := target.Map(set.cfg.SiteURL(), set.cfg.Origin, raw)
 	if err != nil {
 		return p, err
 	}
@@ -121,7 +122,7 @@ func (g *Gateway) mapPage(raw string) (target.Page, error) {
 	if err != nil {
 		return p, err
 	}
-	return target.Map(g.conf().cfg.SiteURL(), g.conf().cfg.Origin, g.snapshotURI(u.RequestURI()))
+	return target.Map(set.cfg.SiteURL(), set.cfg.Origin, snapshotURI(set, u.RequestURI()))
 }
 func notModified(r *http.Request, etag string, created time.Time) bool {
 	if value := r.Header.Get("If-None-Match"); value != "" {

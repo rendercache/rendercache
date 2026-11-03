@@ -17,6 +17,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -124,6 +125,7 @@ type Gateway struct {
 	diagnostics chan struct{}
 	deliveries  *delivery.Log
 	set         atomic.Pointer[settings]
+	applying    sync.Mutex
 	verifier    *verify.Verifier
 	reloader    func(context.Context) (Reload, error)
 	warming     *warm.Manager
@@ -287,30 +289,53 @@ func (g *Gateway) checkCrawler(r *http.Request, set *settings, route *Route) {
 		route.Check = "simulated"
 		return
 	}
-	claims := Claims(r.UserAgent(), set.cfg.Bots)
-	checkable := false
+	checkable, pending := false, false
 	if g.verifier != nil {
+		// The crawlers the user agent names, by the operators' names, plus
+		// the bots patterns it matched: a custom pattern such as "bot" must
+		// not turn a checkable GPTBot claim into an unchecked one.
+		names := g.verifier.Named(r.UserAgent())
+		for _, claim := range Claims(r.UserAgent(), set.cfg.Bots) {
+			if !containsFold(names, claim) {
+				names = append(names, claim)
+			}
+		}
 		addr := g.clientAddr(r, set)
-		for _, name := range claims {
+		for _, name := range names {
 			switch g.verifier.Check(r.Context(), name, addr) {
 			case verify.Verified:
 				route.Crawler, route.Check = name, string(verify.Verified)
 				return
 			case verify.Unverified:
 				checkable = true
+			case verify.Pending:
+				checkable, pending = true, true
 			}
 		}
 	} else {
 		checkable = true // verification is on but nothing can check: never trust a claim
 	}
 	if checkable {
-		*route = Route{Outcome: "BYPASS", Crawler: route.Crawler, Reason: "unverified", Check: string(verify.Unverified)}
+		reason, check := "unverified", verify.Unverified
+		if pending {
+			reason, check = "verification-pending", verify.Pending
+		}
+		*route = Route{Outcome: "BYPASS", Crawler: route.Crawler, Reason: reason, Check: string(check)}
 		return
 	}
 	route.Check = string(verify.Unverifiable)
 	if set.cfg.UnverifiableCrawlers == "live" {
 		*route = Route{Outcome: "BYPASS", Crawler: route.Crawler, Reason: "unverifiable", Check: string(verify.Unverifiable)}
 	}
+}
+
+func containsFold(list []string, s string) bool {
+	for _, x := range list {
+		if strings.EqualFold(x, s) {
+			return true
+		}
+	}
+	return false
 }
 
 // Claims lists every configured crawler name the user agent contains, in the
@@ -339,9 +364,9 @@ func (g *Gateway) clientAddr(r *http.Request, set *settings) netip.Addr {
 		hops = append(hops, strings.Split(v, ",")...)
 	}
 	for i := len(hops) - 1; i >= 0; i-- {
-		addr, err := netip.ParseAddr(strings.TrimSpace(hops[i]))
-		if err != nil {
-			return netip.Addr{} // a malformed chain proves nothing
+		addr, ok := forwardedAddr(hops[i])
+		if !ok {
+			return netip.Addr{} // a malformed or "unknown" hop proves nothing
 		}
 		addr = addr.Unmap()
 		if !inPrefixes(addr, set.trusted) {
@@ -349,6 +374,19 @@ func (g *Gateway) clientAddr(r *http.Request, set *settings) netip.Addr {
 		}
 	}
 	return peer
+}
+
+// forwardedAddr reads one X-Forwarded-For entry: an address, or an address
+// with a port as some load balancers write it (192.0.2.1:443, [2001:db8::1]:443).
+func forwardedAddr(hop string) (netip.Addr, bool) {
+	hop = strings.TrimSpace(hop)
+	if a, err := netip.ParseAddr(hop); err == nil && a.Zone() == "" {
+		return a, true
+	}
+	if ap, err := netip.ParseAddrPort(hop); err == nil && ap.Addr().Zone() == "" {
+		return ap.Addr(), true
+	}
+	return netip.Addr{}, false
 }
 
 func peerAddr(r *http.Request) netip.Addr {

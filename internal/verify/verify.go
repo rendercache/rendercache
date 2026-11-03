@@ -33,6 +33,7 @@ const (
 	Verified     Result = "verified"     // the address belongs to the crawler named
 	Unverified   Result = "unverified"   // the crawler can be checked, and this address failed
 	Unverifiable Result = "unverifiable" // the operator publishes no way to check it
+	Pending      Result = "pending"      // the crawler's list isn't loaded yet (or too old) and it has no DNS check
 )
 
 // Resolver is the part of net.Resolver a check uses.
@@ -60,6 +61,9 @@ const (
 	maxNames       = 5
 	positiveTTL    = 6 * time.Hour
 	negativeTTL    = 30 * time.Minute
+	// maxListAge: a list that could not be refreshed for this long stops
+	// counting. Cloud addresses get reassigned.
+	maxListAge = 30 * 24 * time.Hour
 )
 
 type list struct {
@@ -71,6 +75,7 @@ type list struct {
 	updated     time.Time
 	lastAttempt time.Time
 	lastError   string
+	next        time.Time // when the background loop fetches it again
 }
 
 type cached struct {
@@ -82,6 +87,7 @@ type Verifier struct {
 	sources  map[string]Source // by lower-case crawler name
 	lists    map[string]*list  // by URL
 	order    []string
+	names    []string // lower-case crawler names in source order
 	dir      string
 	client   *http.Client
 	resolver Resolver
@@ -94,12 +100,12 @@ type Verifier struct {
 	cache map[string]cached
 	now   func() time.Time
 
-	refreshing sync.Mutex
+	refreshing chan struct{} // one refresh at a time; waiting honours the context
 }
 
 func New(o Options) (*Verifier, error) {
 	v := &Verifier{sources: map[string]Source{}, lists: map[string]*list{}, dir: o.Dir, client: o.Client, resolver: o.Resolver,
-		refresh: o.Refresh, retry: o.Retry, logger: o.Logger, dns: make(chan struct{}, dnsConcurrency), cache: map[string]cached{}, now: time.Now}
+		refresh: o.Refresh, retry: o.Retry, logger: o.Logger, dns: make(chan struct{}, dnsConcurrency), cache: map[string]cached{}, now: time.Now, refreshing: make(chan struct{}, 1)}
 	if v.client == nil {
 		v.client = &http.Client{Timeout: 30 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) >= 3 || req.URL.Scheme != "https" {
@@ -139,6 +145,7 @@ func New(o Options) (*Verifier, error) {
 			}
 		}
 		v.sources[key] = s
+		v.names = append(v.names, key)
 		if s.RangesURL == "" {
 			continue
 		}
@@ -155,6 +162,20 @@ func New(o Options) (*Verifier, error) {
 		l.crawlers = append(l.crawlers, s.Crawler)
 	}
 	return v, nil
+}
+
+// Named lists the checkable crawlers whose names the user agent contains,
+// case-insensitively, in the order of the sources. Verification follows these
+// names, whatever bots patterns the user agent also matched.
+func (v *Verifier) Named(userAgent string) []string {
+	ua := strings.ToLower(userAgent)
+	var out []string
+	for _, key := range v.names {
+		if strings.Contains(ua, key) {
+			out = append(out, v.sources[key].Crawler)
+		}
+	}
+	return out
 }
 
 // Verifiable reports whether the operator of crawler publishes a way to check it.
@@ -175,9 +196,11 @@ func (v *Verifier) Check(ctx context.Context, crawler string, addr netip.Addr) R
 	if !addr.IsValid() {
 		return Unverified
 	}
+	loaded := false
 	if s.RangesURL != "" {
-		if p := v.lists[s.RangesURL].prefixes.Load(); p != nil {
-			for _, prefix := range *p {
+		if p := v.current(v.lists[s.RangesURL]); p != nil {
+			loaded = true
+			for _, prefix := range p {
 				if prefix.Contains(addr) {
 					return Verified
 				}
@@ -185,6 +208,9 @@ func (v *Verifier) Check(ctx context.Context, crawler string, addr netip.Addr) R
 		}
 	}
 	if len(s.DNSSuffixes) == 0 {
+		if !loaded {
+			return Pending
+		}
 		return Unverified
 	}
 	key := strings.ToLower(s.Crawler) + "|" + addr.String()
@@ -217,6 +243,22 @@ func (v *Verifier) Check(ctx context.Context, crawler string, addr netip.Addr) R
 		return Verified
 	}
 	return Unverified
+}
+
+// current returns the list's prefixes, or nil when none are loaded or the
+// last good copy is older than maxListAge.
+func (v *Verifier) current(l *list) []netip.Prefix {
+	p := l.prefixes.Load()
+	if p == nil {
+		return nil
+	}
+	l.mu.Lock()
+	updated := l.updated
+	l.mu.Unlock()
+	if !updated.IsZero() && v.now().Sub(updated) > maxListAge {
+		return nil
+	}
+	return *p
 }
 
 // reverse runs forward-confirmed reverse DNS. final is false when a lookup
@@ -294,10 +336,7 @@ func (v *Verifier) Start(ctx context.Context) {
 	}
 	go func() {
 		for {
-			wait := v.refresh
-			if v.Refresh(ctx) != nil {
-				wait = v.retry
-			}
+			wait := v.fetchDue(ctx)
 			t := time.NewTimer(wait)
 			select {
 			case <-ctx.Done():
@@ -309,10 +348,46 @@ func (v *Verifier) Start(ctx context.Context) {
 	}()
 }
 
+// fetchDue fetches the lists whose time has come, each on its own schedule
+// (refresh after a success, retry after a failure), and returns how long to
+// wait for the next one.
+func (v *Verifier) fetchDue(ctx context.Context) time.Duration {
+	select {
+	case v.refreshing <- struct{}{}:
+		defer func() { <-v.refreshing }()
+	case <-ctx.Done():
+		return time.Minute
+	}
+	wait := v.refresh
+	for _, u := range v.order {
+		l := v.lists[u]
+		l.mu.Lock()
+		due := l.next
+		l.mu.Unlock()
+		if !v.now().Before(due) {
+			v.fetch(ctx, l)
+			l.mu.Lock()
+			due = l.next
+			l.mu.Unlock()
+		}
+		if d := due.Sub(v.now()); d < wait {
+			wait = d
+		}
+	}
+	if wait < time.Second {
+		wait = time.Second
+	}
+	return wait
+}
+
 // Refresh fetches every list now. A list that fails keeps its last good copy.
 func (v *Verifier) Refresh(ctx context.Context) error {
-	v.refreshing.Lock()
-	defer v.refreshing.Unlock()
+	select {
+	case v.refreshing <- struct{}{}:
+		defer func() { <-v.refreshing }()
+	case <-ctx.Done():
+		return fmt.Errorf("crawler ranges: a refresh is already running: %w", ctx.Err())
+	}
 	var errs []error
 	for _, u := range v.order {
 		if ctx.Err() != nil {
@@ -337,12 +412,14 @@ func (v *Verifier) fetch(ctx context.Context, l *list) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if err != nil {
+		l.next = v.now().Add(v.retry)
 		l.lastError = err.Error()
 		v.logger.Warn("crawler ranges not updated", "url", l.url, "error", err)
 		return err
 	}
 	l.lastError = ""
 	l.updated = v.now()
+	l.next = v.now().Add(v.refresh)
 	return nil
 }
 

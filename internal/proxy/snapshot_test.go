@@ -295,7 +295,7 @@ func TestTrackingParametersShareSnapshot(t *testing.T) {
 		t.Fatal("unexpected origin calls", calls.Load())
 	}
 	for in, want := range map[string]string{"/a": "/a", "/a?utm_source=1": "/a", "/a?b=1&utm_medium=2&c=%20": "/a?b=1&c=%20", "/a?utm%5Fterm=1": "/a"} {
-		if got := g.snapshotURI(in); got != want {
+		if got := snapshotURI(g.conf(), in); got != want {
 			t.Errorf("%s -> %s, want %s", in, got, want)
 		}
 	}

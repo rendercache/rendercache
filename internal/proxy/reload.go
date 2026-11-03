@@ -4,10 +4,10 @@ package proxy
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"reflect"
 	"sort"
-	"sync"
 	"time"
 
 	"github.com/rendercache/rendercache/internal/config"
@@ -30,16 +30,14 @@ var reloadable = map[string]bool{
 	"verify_crawlers": true, "unverifiable_crawlers": true,
 }
 
-var applying sync.Mutex
-
 // Apply takes the reloadable settings of c and lists the other settings
 // that differ and need a restart. c must be valid.
 func (g *Gateway) Apply(c config.Config) (Reload, error) {
 	if err := c.Validate(); err != nil {
 		return Reload{}, err
 	}
-	applying.Lock()
-	defer applying.Unlock()
+	g.applying.Lock()
+	defer g.applying.Unlock()
 	old := g.conf().cfg
 	next := old
 	out := Reload{Applied: []string{}, RestartRequired: []string{}}
@@ -59,6 +57,12 @@ func (g *Gateway) Apply(c config.Config) (Reload, error) {
 	}
 	sort.Strings(out.Applied)
 	sort.Strings(out.RestartRequired)
+	// What will run is the old process settings with the new reloadable
+	// ones: check that combination, not only the file (a token can't be
+	// dropped while a public admin listener waits for a restart).
+	if err := next.Validate(); err != nil {
+		return Reload{}, fmt.Errorf("refused: with the settings that need a restart unchanged, %w", err)
+	}
 	g.set.Store(newSettings(next))
 	return out, nil
 }

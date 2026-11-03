@@ -100,8 +100,8 @@ func load(v *Verifier, url string, prefixes ...string) {
 func TestRanges(t *testing.T) {
 	v := newVerifier(t, Options{Sources: []Source{{Crawler: "GPTBot", RangesURL: "https://ranges.test/gptbot.json"}}, Resolver: &fakeDNS{}})
 	ctx := context.Background()
-	if got := v.Check(ctx, "GPTBot", netip.MustParseAddr("203.0.113.9")); got != Unverified {
-		t.Fatalf("no list loaded yet: got %s, want unverified", got)
+	if got := v.Check(ctx, "GPTBot", netip.MustParseAddr("203.0.113.9")); got != Pending {
+		t.Fatalf("no list loaded yet: got %s, want pending", got)
 	}
 	load(v, "https://ranges.test/gptbot.json", "203.0.113.0/24", "2001:db8::/32")
 	for addr, want := range map[string]Result{"203.0.113.9": Verified, "::ffff:203.0.113.9": Verified, "2001:db8::1": Verified, "198.51.100.7": Unverified} {
@@ -257,7 +257,7 @@ func TestRefreshKeepsGoodList(t *testing.T) {
 	os.WriteFile(files[0], []byte("garbage"), 0o600)
 	broken := newVerifier(t, Options{Sources: src, Dir: dir, Client: &http.Client{Transport: failing{}}, Resolver: &fakeDNS{}, Refresh: time.Hour, Retry: time.Hour})
 	broken.Start(ctx)
-	if broken.Check(ctx, "PerplexityBot", in) != Unverified {
+	if broken.Check(ctx, "PerplexityBot", in) != Pending {
 		t.Error("a damaged kept list was trusted")
 	}
 }
@@ -332,5 +332,69 @@ func TestLiveRanges(t *testing.T) {
 	}
 	if err != nil {
 		t.Error(err)
+	}
+}
+
+// Review of 0.3 Phase A.
+
+// Refresh gives up waiting for a running refresh when its context ends.
+func TestReview030RefreshHonoursContext(t *testing.T) {
+	release := make(chan struct{})
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-release
+		w.Write([]byte(`{"prefixes":[{"ipv4Prefix":"203.0.113.0/24"}]}`))
+	}))
+	defer srv.Close()
+	defer close(release)
+	v := newVerifier(t, Options{Sources: []Source{{Crawler: "GPTBot", RangesURL: srv.URL + "/g.json"}}, Client: srv.Client()})
+	go v.Refresh(context.Background())
+	time.Sleep(50 * time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	if err := v.Refresh(ctx); err == nil {
+		t.Error("no error for a refresh that could not run")
+	}
+	if time.Since(started) > time.Second {
+		t.Errorf("Refresh waited %s past its context", time.Since(started))
+	}
+}
+
+// Googlebot's reverse DNS is googlebot.com only: google.com names belong to
+// other Google fetchers.
+func TestReview030GoogleSuffix(t *testing.T) {
+	for _, s := range Builtin {
+		if strings.HasPrefix(strings.ToLower(s.Crawler), "google") {
+			for _, suffix := range s.DNSSuffixes {
+				if suffix != "googlebot.com" {
+					t.Errorf("%s accepts %s", s.Crawler, suffix)
+				}
+			}
+		}
+		if strings.Contains(s.RangesURL, "perplexity.ai") {
+			t.Errorf("%s: %s is not the documented perplexity.com list", s.Crawler, s.RangesURL)
+		}
+	}
+}
+
+// A kept list stops counting once it is older than maxListAge.
+func TestReview030OldListExpires(t *testing.T) {
+	v := newVerifier(t, Options{Sources: []Source{{Crawler: "GPTBot", RangesURL: "https://ranges.test/g.json"}}})
+	load(v, "https://ranges.test/g.json", "203.0.113.0/24")
+	l := v.lists["https://ranges.test/g.json"]
+	l.mu.Lock()
+	l.updated = time.Now().Add(-maxListAge - time.Hour)
+	l.mu.Unlock()
+	if got := v.Check(context.Background(), "GPTBot", netip.MustParseAddr("203.0.113.9")); got == Verified {
+		t.Error("an expired list verified a crawler")
+	}
+}
+
+// Named finds the checkable crawlers a user agent mentions.
+func TestReview030Named(t *testing.T) {
+	v := newVerifier(t, Options{Sources: Builtin})
+	got := v.Named("Mozilla/5.0 (compatible; GPTBot/1.2) slackbot ClaudeBot")
+	if strings.Join(got, ",") != "GPTBot,ClaudeBot" {
+		t.Errorf("got %v", got)
 	}
 }

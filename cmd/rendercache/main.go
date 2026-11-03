@@ -220,6 +220,14 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) error {
 	if *pageURL != "" {
 		return errors.New("--url is only used by render/inspect")
 	}
+	// SIGHUP's default action ends the process, so take it over before the
+	// slow startup work (opening the store, starting Chrome); a SIGHUP that
+	// arrives then is applied once serving starts.
+	hup := make(chan os.Signal, 1)
+	if len(reloadSignals) > 0 {
+		signal.Notify(hup, reloadSignals...)
+		defer signal.Stop(hup)
+	}
 	workCtx, stopWarming := context.WithCancel(ctx)
 	defer stopWarming()
 	logger := slog.New(slog.NewJSONHandler(errOut, nil))
@@ -240,8 +248,13 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) error {
 	g.SetVerifier(verifier)
 	// The range lists are fetched only once verification is on, at start or
 	// after a reload turns it on.
+	// rangesOn reports whether this call started the fetching, which then
+	// fetches every list at once by itself.
 	var startRanges sync.Once
-	rangesOn := func() { startRanges.Do(func() { verifier.Start(workCtx) }) }
+	rangesOn := func() (started bool) {
+		startRanges.Do(func() { verifier.Start(workCtx); started = true })
+		return started
+	}
 	if c.VerifyCrawlers {
 		rangesOn()
 	}
@@ -255,8 +268,7 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) error {
 			return result, err
 		}
 		if g.Settings().VerifyCrawlers {
-			rangesOn()
-			if fetch {
+			if !rangesOn() && fetch {
 				if err := g.RefreshRanges(ctx); err != nil {
 					result.RangesError = err.Error()
 				}
@@ -327,11 +339,6 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) error {
 		go func(s *http.Server, l net.Listener) { errCh <- s.Serve(l) }(entry.s, entry.l)
 	}
 	lifecycleErr := boundedInfo(logger, "listening", "public", publicLn.Addr().String(), "admin", adminLn.Addr().String(), "origin", c.Origin, "warming_enabled", c.WarmEnabled, "snapshot_serving_enabled", c.SnapshotEnabled)
-	hup := make(chan os.Signal, 1)
-	if len(reloadSignals) > 0 {
-		signal.Notify(hup, reloadSignals...)
-		defer signal.Stop(hup)
-	}
 	var serveErr error
 wait:
 	for {
