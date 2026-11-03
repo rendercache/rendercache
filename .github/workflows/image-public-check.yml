@@ -1,0 +1,23 @@
+name: Image public check
+# Run by hand after a release: can anyone pull the image without signing in?
+# A new GHCR package is private until an owner makes it public once in its
+# settings; the site tells people to docker pull only after this passes.
+on:
+  workflow_dispatch:
+permissions: {}
+jobs:
+  anonymous:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Anonymous manifest fetch
+        run: |
+          version=$(curl -fsSL https://raw.githubusercontent.com/rendercache/rendercache/main/VERSION | tr -d '\r\n')
+          token=$(curl -fsS "https://ghcr.io/token?scope=repository:rendercache/rendercache:pull" | python3 -c 'import json,sys;print(json.load(sys.stdin).get("token",""))')
+          code=$(curl -s -o manifest.json -w '%{http_code}' -H "Authorization: Bearer $token" \
+            -H 'Accept: application/vnd.oci.image.index.v1+json' "https://ghcr.io/v2/rendercache/rendercache/manifests/$version")
+          if [ "$code" != 200 ]; then
+            echo "::error title=image not public::anonymous pull of ghcr.io/rendercache/rendercache:$version answered HTTP $code"
+            exit 1
+          fi
+          archs=$(python3 -c 'import json;print(" ".join(m["platform"]["architecture"] for m in json.load(open("manifest.json"))["manifests"] if m.get("platform",{}).get("os")=="linux"))')
+          echo "::notice title=image public::ghcr.io/rendercache/rendercache:$version pulls without signing in ($archs)"
