@@ -8,6 +8,10 @@ import (
 
 var errLocked = errors.New("data directory already locked by another RenderCache process")
 
+// errReplaced: the name now refers to a different regular file than the one
+// opened, because it was renamed over in between. Not a link.
+var errReplaced = errors.New("file replaced while opening")
+
 func checkRegular(f *os.File) (*os.File, error) {
 	info, err := f.Stat()
 	if err != nil || !info.Mode().IsRegular() {
@@ -43,8 +47,11 @@ func sameAsName(root *os.Root, name string, f *os.File) error {
 	if err != nil {
 		return err
 	}
-	if !named.Mode().IsRegular() || !os.SameFile(opened, named) {
+	if !named.Mode().IsRegular() {
 		return errors.New("expected a regular file, not a link")
+	}
+	if !os.SameFile(opened, named) {
+		return errReplaced
 	}
 	return nil
 }

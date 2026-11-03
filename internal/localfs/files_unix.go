@@ -14,23 +14,30 @@ import (
 // OpenRegular opens name inside root without following a symlink and without
 // blocking on a FIFO, and accepts only regular files. os.Root itself follows
 // links that stay inside the root, so the name is also checked with Lstat and
-// the opened file must be that same regular file.
+// the opened file must be that same regular file. When the name was atomically
+// replaced by another regular file in between (a refresh saving a new copy),
+// the open is retried rather than refused.
 func OpenRegular(root *os.Root, name string, flags int) (*os.File, error) {
-	if info, err := root.Lstat(name); err == nil && !info.Mode().IsRegular() {
-		return nil, errors.New("expected a regular file")
-	}
-	f, err := root.OpenFile(name, flags|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0600)
-	if err != nil {
-		return nil, err
-	}
-	if f, err = checkRegular(f); err != nil {
-		return nil, err
-	}
-	if err = sameAsName(root, name, f); err != nil {
+	for attempt := 0; ; attempt++ {
+		if info, err := root.Lstat(name); err == nil && !info.Mode().IsRegular() {
+			return nil, errors.New("expected a regular file")
+		}
+		f, err := root.OpenFile(name, flags|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0600)
+		if err != nil {
+			return nil, err
+		}
+		if f, err = checkRegular(f); err != nil {
+			return nil, err
+		}
+		err = sameAsName(root, name, f)
+		if err == nil {
+			return f, nil
+		}
 		f.Close()
-		return nil, err
+		if !errors.Is(err, errReplaced) || attempt == 4 {
+			return nil, err
+		}
 	}
-	return f, nil
 }
 
 // Lock is advisory between RenderCache commands. Keep its inode in place across
