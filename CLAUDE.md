@@ -42,7 +42,9 @@ rendercache.com keeps its Launch template unchanged; edit content and config val
 
 ## Current state
 
-v0.4.0 is the latest release (Linux amd64, macOS arm64, Windows amd64), published on 2026-11-03 by the release workflow from commit 23bb236: open shadow roots and same-origin frames written into saved HTML (`flatten_shadow_roots`, `flatten_frames`), tested with a real Lit 3.3.3 page (internal/render/testdata/lit). v0.3.0 (f5de9d6, same day) added verified crawlers and config reload. test/results holds the recordings from the 0.4.0 release CI run. Both phases had two independent review rounds, all findings fixed with tests (TestReview030*, TestReview040*). The downloaded Linux archives of both were checked against SHA256SUMS and run. rendercache.com has the 0.3.0 and 0.4.0 posts; softdevstudio.com has both notes.
+v0.5.0 is the latest release, published on 2026-11-03 by the release workflow (run 41627149285) from commit 3b10dd3: archives for Linux amd64 and arm64, macOS arm64 and Windows amd64, and the multi-arch image ghcr.io/rendercache/rendercache:0.5.0 and :latest (Debian trixie, amd64 and arm64, each smoke-tested natively). Both Linux archives were downloaded and checked against SHA256SUMS. v0.4.0 (23bb236) writes open shadow roots and same-origin frames into saved HTML; v0.3.0 (f5de9d6) added verified crawlers and config reload. All three had independent reviews, findings fixed with tests.
+
+Open: the GHCR package is private (image-public-check workflow: anonymous token refused, HTTP 401). An owner makes it public once (package settings, Change visibility). Then run image-public-check; when it passes, publish the 0.5.0 post on rendercache.com and the softdevstudio.com note, which wait for it. The download page already offers the arm64 archive.
 
 ## Next: 0.3 to 0.5, item 7 of softdev-plan.md
 
