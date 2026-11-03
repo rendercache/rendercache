@@ -318,18 +318,47 @@ func (c *Chrome) Render(parent context.Context, p target.Page) (Result, error) {
 	expression := fmt.Sprintf(`(() => {
  const flattenShadow=%t, flattenFrames=%t, maxFrameDepth=3;
  let shadowRoots=0, frames=0, frameBudget=20;
+ // Frames of the page itself keep their share of the budget, so frames
+ // nested deep inside the first ones can't use it all up.
+ let topLeft=Math.min(document.querySelectorAll('iframe').length,frameBudget);
  // Styles of shadow roots and frames are scoped there; written into the page
  // they would restyle it, so they are left out.
  const scopedStyle=n=>n.nodeType===1&&n.getRootNode()!==document&&(n.localName==='style'||(n.localName==='link'&&/(^|\s)stylesheet(\s|$)/i.test(n.getAttribute('rel')||'')));
  // A frame's relative URLs resolve against the frame's own address; written
- // into the page they are made absolute.
- const urlAttrs=['href','src','action','formaction','poster','data','cite','background'];
+ // into the page they are rewritten so they still point there. Addresses on
+ // this site become root-relative, so the snapshot names the public site,
+ // never the origin Chrome renders from; others stay as they are. Only
+ // attributes that hold URLs on that element are touched.
+ const urlAttrs={href:['a','area','link','use','image'],src:['img','source','iframe','embed','audio','video','track','input','script'],
+  data:['object'],action:['form'],formaction:['button','input'],poster:['video'],cite:['blockquote','q','del','ins'],background:['body','table','td','th']};
+ const emptyIsSelf={href:1,action:1,formaction:1};
+ const rewrite=(v,base,attr)=>{
+  const t=v.trim();
+  if(t===''&&!emptyIsSelf[attr])return v;
+  if(/^(#|javascript:|data:|mailto:|tel:|\/\/)/i.test(t))return v;
+  let u;try{u=new URL(t,base)}catch(e){return v}
+  return u.origin===location.origin?u.pathname+u.search+u.hash:u.href;
+ };
+ const srcset=(v,base)=>{ // URL = a run of non-space; descriptors up to the next comma
+  const out=[];let i=0;
+  while(i<v.length){
+   while(i<v.length&&/[\s,]/.test(v[i]))i++;
+   if(i>=v.length)break;
+   let j=i;while(j<v.length&&!/\s/.test(v[j]))j++;
+   let url=v.slice(i,j),tail='';
+   if(/,$/.test(url)){url=url.replace(/,+$/,'');i=j}else{let k=j;while(k<v.length&&v[k]!==',')k++;tail=v.slice(j,k).trim();i=k+1}
+   out.push(rewrite(url,base,'srcset')+(tail?' '+tail:''));
+  }
+  return out.join(', ');
+ };
  const absolute=(copy,n)=>{
   if(n.ownerDocument===document)return;
   const base=n.baseURI;
-  for(const a of urlAttrs){const v=n.getAttribute(a);if(v!==null&&v.trim()!==''&&!/^\s*(#|javascript:|data:|mailto:|tel:)/i.test(v)){try{copy.setAttribute(a,new URL(v.trim(),base).href)}catch(e){}}}
-  const set=n.getAttribute('srcset');
-  if(set){copy.setAttribute('srcset',set.split(',').map(c=>{const p=c.trim().split(/\s+/);try{if(p[0])p[0]=new URL(p[0],base).href}catch(e){}return p.join(' ')}).join(', '))}
+  for(const [attr,tags] of Object.entries(urlAttrs)){
+   if(!tags.includes(n.localName)||!n.hasAttribute(attr))continue;
+   copy.setAttribute(attr,rewrite(n.getAttribute(attr),base,attr));
+  }
+  if((n.localName==='img'||n.localName==='source')&&n.hasAttribute('srcset'))copy.setAttribute('srcset',srcset(n.getAttribute('srcset'),base));
  };
  const page=u=>u.origin+u.pathname;
  const ancestors=[page(location)];
@@ -338,14 +367,16 @@ func (c *Chrome) Render(parent context.Context, p target.Page) (Result, error) {
  // (lazy frames hold an empty about:blank), not an error page, not one that
  // went elsewhere, and not a page already being written (a page that frames
  // itself).
- const loadedFrame=n=>{
-  if(frameBudget<=0)return null;
+ const loadedFrame=(n,depth)=>{
+  if(frameBudget<=0||(depth>0&&frameBudget-topLeft<=0))return null;
   let doc=null,win=null;try{doc=n.contentDocument;win=n.contentWindow}catch(e){}
   if(!doc||!doc.body||!win)return null;
   const href=doc.location.href;
   if(n.hasAttribute('srcdoc'))return href==='about:srcdoc'?{doc,key:null}:null;
   const src=(n.getAttribute('src')||'').trim();
-  if(src===''||n.src==='about:blank')return href==='about:blank'?{doc,key:null}:null;
+  // A frame without a source is about:blank, or the page's own address once
+  // a script has opened and written it.
+  if(src===''||n.src==='about:blank')return href==='about:blank'||href===location.href?{doc,key:null}:null;
   let want,got;try{want=new URL(n.src);got=new URL(href)}catch(e){return null}
   if(got.origin!==location.origin||page(got)!==page(want)||got.search!==want.search)return null;
   if(ancestors.includes(page(got)))return null;
@@ -368,7 +399,8 @@ func (c *Chrome) Render(parent context.Context, p target.Page) (Result, error) {
   absolute(copy,n);
   if(flattenShadow&&n.shadowRoot){shadowRoots++;appendChildren(n.shadowRoot,copy,depth);return copy}
   if(flattenFrames&&n.localName==='iframe'&&depth<maxFrameDepth){
-   const frame=loadedFrame(n);
+   const frame=loadedFrame(n,depth);
+   if(depth===0&&topLeft>0)topLeft--;
    if(frame){
     frames++;frameBudget--;
     const div=document.createElement('div');

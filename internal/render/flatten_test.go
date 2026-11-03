@@ -4,6 +4,7 @@ package render
 import (
 	"context"
 	_ "embed"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -190,10 +191,10 @@ func TestReview040Frames(t *testing.T) {
 	if !strings.Contains(h, "LIGHT DOM PROJECTED") || strings.Contains(h, "FALLBACK SHOWN") || strings.Contains(h, "<slot") {
 		t.Errorf("slot inside a frame not resolved")
 	}
-	// 3. Links and images in a frame keep pointing where they did.
-	for _, want := range []string{`href="` + srv.URL + `/widgets/item.html"`, `src="` + srv.URL + `/widgets/pic.png"`, srv.URL + `/widgets/big/pic.png 2x`} {
+	// 3. Links and images in a frame keep pointing where they did (root-relative).
+	for _, want := range []string{`href="/widgets/item.html"`, `src="/widgets/pic.png"`, `/widgets/big/pic.png 2x`} {
 		if !strings.Contains(h, want) {
-			t.Errorf("frame URL not made absolute: want %s", want)
+			t.Errorf("frame URL not rewritten: want %s", want)
 		}
 	}
 	// 4. An error page is not written into the snapshot.
@@ -203,5 +204,65 @@ func TestReview040Frames(t *testing.T) {
 	// A page framing itself is written once, not k + k² + k³ times.
 	if n := strings.Count(h, "<p>loop</p>"); n != 1 {
 		t.Errorf("self-framing page written %d times", n)
+	}
+}
+
+// Second review round of 0.4 Phase B: each case failed on 313a493.
+func TestReview040bFrameURLsUsePublicSite(t *testing.T) {
+	opts := browserOptions(t)
+	opts.ReadySelector = ""
+	opts.Settle = 1500 * time.Millisecond
+	opts.FlattenShadowRoots, opts.FlattenFrames = true, true
+	engine, err := NewChrome(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var top strings.Builder
+	top.WriteString(`<!doctype html><title>t</title><iframe src="/sub/attrs.html"></iframe><iframe srcdoc="<a href='sdrel'>srcdoc link</a>"></iframe>`)
+	for i := 1; i <= 3; i++ {
+		fmt.Fprintf(&top, `<iframe src="/n%d"></iframe>`, i)
+	}
+	top.WriteString(`<iframe src="/last"></iframe><iframe id="filled"></iframe><script>const d=document.getElementById('filled').contentDocument;d.open();d.write('<p>Filled by script</p>');d.close()</script>`)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		switch {
+		case r.URL.Path == "/sub/attrs.html":
+			io.WriteString(w, `<a href="attrs.html?page=2">next</a><a href="">self</a><a href="//cdn.example/x">cdn</a>`+
+				`<img src="pic.png" srcset="data:image/gif;base64,R0lGODlhAQABAAAAACw= 1x, https://img.example/upload/w_100,h_50/a.jpg 2x, big/pic.png 3x">`+
+				`<div data="notaurl" href="nothing" src="custom">plain</div><svg><use href="sprite.svg#i"></use></svg>`)
+		case r.URL.Path == "/last":
+			io.WriteString(w, `<p>LAST TOP FRAME</p>`)
+		case strings.HasPrefix(r.URL.Path, "/n"):
+			fmt.Fprintf(w, `<p>%s</p>`, r.URL.Path)
+			if len(r.URL.Path) < 6 {
+				for i := 1; i <= 3; i++ {
+					fmt.Fprintf(w, `<iframe src="%s%d"></iframe>`, r.URL.Path, i)
+				}
+			}
+		default:
+			io.WriteString(w, top.String())
+		}
+	}))
+	t.Cleanup(srv.Close)
+	p, err := target.Map("https://public.example", srv.URL, "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	res, err := engine.Render(ctx, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := res.HTML
+	if strings.Contains(h, strings.TrimPrefix(srv.URL, "http://")) {
+		t.Errorf("snapshot names the origin address %s", srv.URL)
+	}
+	for _, want := range []string{`href="/sub/attrs.html?page=2"`, `href="/sub/attrs.html"`, `href="//cdn.example/x"`, `src="/sub/pic.png"`,
+		`data:image/gif;base64,R0lGODlhAQABAAAAACw= 1x`, `https://img.example/upload/w_100,h_50/a.jpg 2x`, `/sub/big/pic.png 3x`,
+		`<div data="notaurl" href="nothing" src="custom">`, `<use href="/sub/sprite.svg#i">`, `href="/sdrel"`, "LAST TOP FRAME", "Filled by script"} {
+		if !strings.Contains(h, want) {
+			t.Errorf("missing %s", want)
+		}
 	}
 }
