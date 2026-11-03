@@ -95,7 +95,7 @@ func TestEdgeKeyIsRequiredAndNeverForwarded(t *testing.T) {
 
 func TestAdminSimulationWorksWithEdgeProtection(t *testing.T) {
 	g, l := demoGateway(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Error("snapshot simulation unexpectedly reached origin") }))
-	g.cfg.EdgeToken = "edge-secret"
+	g.edit(func(c *config.Config) { c.EdgeToken = "edge-secret" })
 	if _, err := g.store.Save(mapped(g, "/"), render.Result{Status: 200, HTML: "public snapshot"}); err != nil {
 		t.Fatal(err)
 	}

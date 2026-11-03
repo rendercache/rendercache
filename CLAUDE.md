@@ -43,6 +43,29 @@ rendercache.com keeps its Launch template unchanged; edit content and config val
 
 v0.2.0 is the latest release (Linux amd64, macOS arm64, Windows amd64), published on 2026-10-18 by the release workflow (run 39098005269) from commit d54c1a5. The releases/latest links resolve to it. test/results holds the recordings from CI run 39097621925. rendercache.com has the reference page, the 0.2.0 post, the how-it-is-tested post and the name post; softdevstudio.com has the 0.2.0 note.
 
-## Next
+## Next: 0.3 to 0.5, item 7 of softdev-plan.md
 
-The plan agreed with the owner on 2026-10-18 (move onto the low maintenance workflow, then release 0.2.0 for three platforms) is done. Nothing further is agreed yet. Propose the next plan to the owner before starting; candidates are Linux arm64 archives, a published container image and a fresh demo capture on the site.
+Approved by the owner on 2026-11-03 ("Go"): Phases A, B and C and the upkeep of item 7 in softdev-plan.md (photozeitgeist/jollyroger.biz). Each phase is its own release.
+
+Building here: go.mod needs Go 1.26 (the code uses os.Root.Rename; chromedp and x/net need 1.25), and the module proxy is blocked. `apt-get install golang-1.26-go` gives Go 1.26; the four modules are cloned from GitHub into /home/claude/gomods/rc and used through a sandbox-only modfile: `. /home/claude/gomods/rc/env.sh` (recreate it from the versions in go.mod if the session is new). Chrome for Testing is at /opt/google/chrome/chrome.
+
+Phase A, 0.3.0: verified crawlers and reload.
+- `verify_crawlers` (default off) / `--verify-crawlers`: a user agent naming a crawler that can be checked must come from an address in its operator's published JSON list or pass forward-confirmed reverse DNS, or it gets the live app (BYPASS, reason `unverified`). internal/verify holds the sources (verify.Builtin, checked on the operators' pages 2026-11-03), list fetching (daily, 15 min retry, last good copy in data_dir/crawlers), DNS checks (2 s, 16 at once, cached 6 h / 30 min).
+- `unverifiable_crawlers` (`snapshot` default, or `live`) for crawlers with no published check.
+- Client address: the peer, or the last X-Forwarded-For address that isn't a trusted proxy when the peer is trusted or the edge token matched.
+- Reload on SIGHUP (not Windows) or admin `POST /reload`: reloadable settings applied atomically (a request keeps the settings it started with), others reported under `restart_required`; an invalid file changes nothing.
+- Delivery log field `crawler_check`. Opt-in live test TestLiveRanges and the ranges-live workflow (run by hand).
+- Done when: a spoofed GPTBot gets the live app (TestSpoofedCrawlerGetsLiveSite).
+
+Phase B, 0.4.0: flatten open shadow roots and same-origin iframes into the captured HTML. Done when a Lit fixture's captured HTML contains its text.
+
+Phase C, 0.5.0: Linux arm64 archives and a multi-arch image on GHCR.
+
+Upkeep (with Phase A): one README intro, "Run the current checkpoint" renamed, no em dash in the status line.
+
+Steps:
+1. [x] Phase A code and tests; README, deployment guide
+2. [ ] independent review, fixes, recording; ranges-live run
+3. [ ] release 0.3.0; site; softdevstudio note; softdev-plan.md
+4. [ ] Phase B, review, release 0.4.0
+5. [ ] Phase C, release 0.5.0

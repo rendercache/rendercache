@@ -23,6 +23,7 @@ type Event struct {
 	Status      int       `json:"status"`
 	Cache       string    `json:"cache"`
 	Reason      string    `json:"reason,omitempty"`
+	Check       string    `json:"crawler_check,omitempty"`
 	Age         int64     `json:"snapshot_age_seconds"`
 	Bytes       int64     `json:"delivered_bytes"`
 	DurationMS  int64     `json:"duration_ms"`
@@ -93,6 +94,7 @@ func (l *Log) Record(e Event) {
 	e.Method = bound(e.Method, 16)
 	e.Cache = bound(e.Cache, 16)
 	e.Reason = bound(e.Reason, 64)
+	e.Check = bound(e.Check, 16)
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.closed {

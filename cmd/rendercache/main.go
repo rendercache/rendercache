@@ -17,6 +17,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"syscall"
 	"time"
 
@@ -27,6 +28,7 @@ import (
 	"github.com/rendercache/rendercache/internal/sitemap"
 	"github.com/rendercache/rendercache/internal/snapshot"
 	"github.com/rendercache/rendercache/internal/target"
+	"github.com/rendercache/rendercache/internal/verify"
 	"github.com/rendercache/rendercache/internal/warm"
 )
 
@@ -77,6 +79,7 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) error {
 	sitemapURL := fs.String("sitemap", "", "public sitemap URL or root-relative path; replaces configured sitemap_urls")
 	warmInterval := fs.String("warm-interval", "", "snapshot refresh interval")
 	sitemapInterval := fs.String("sitemap-interval", "", "sitemap rediscovery interval")
+	verifyCrawlers := fs.Bool("verify-crawlers", false, "serve snapshots only to crawlers whose address their operator's published ranges or reverse DNS confirm")
 	if err := fs.Parse(args[1:]); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
@@ -86,51 +89,59 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) error {
 	if fs.NArg() != 0 {
 		return errors.New("unexpected positional arguments")
 	}
-	c, err := config.Load(*configPath)
-	if err != nil {
-		return err
-	}
-	fs.Visit(func(f *flag.Flag) {
-		switch f.Name {
-		case "snapshots":
-			c.SnapshotEnabled = *snapshots
-		case "snapshot-ttl":
-			c.SnapshotTTL = *snapshotTTL
-		case "warm":
-			c.WarmEnabled = *warmFlag
-		case "sitemap":
-			c.SitemapURLs = []string{*sitemapURL}
-		case "warm-interval":
-			c.WarmInterval = *warmInterval
-		case "sitemap-interval":
-			c.SitemapInterval = *sitemapInterval
-		case "public-url":
-			c.PublicURL = *publicURL
-		case "data-dir":
-			c.DataDir = *dataDir
-		case "chrome-path":
-			c.ChromePath = *chromePath
-		case "chrome-no-sandbox":
-			c.ChromeNoSandbox = *noSandbox
-		case "ready-selector":
-			c.ReadySelector = *ready
-		case "render-timeout":
-			c.RenderTimeout = *renderTimeout
-		case "origin":
-			c.Origin = *origin
-		case "listen":
-			c.Listen = *listen
-		case "admin-listen":
-			c.AdminListen = *admin
+	// load reads the configuration the same way at start and on every reload:
+	// file, then the flags given, then the token variables.
+	load := func() (config.Config, error) {
+		c, err := config.Load(*configPath)
+		if err != nil {
+			return c, err
 		}
-	})
-	if token, ok := os.LookupEnv("RENDERCACHE_EDGE_TOKEN"); ok {
-		c.EdgeToken = token
+		fs.Visit(func(f *flag.Flag) {
+			switch f.Name {
+			case "snapshots":
+				c.SnapshotEnabled = *snapshots
+			case "snapshot-ttl":
+				c.SnapshotTTL = *snapshotTTL
+			case "warm":
+				c.WarmEnabled = *warmFlag
+			case "sitemap":
+				c.SitemapURLs = []string{*sitemapURL}
+			case "warm-interval":
+				c.WarmInterval = *warmInterval
+			case "sitemap-interval":
+				c.SitemapInterval = *sitemapInterval
+			case "public-url":
+				c.PublicURL = *publicURL
+			case "data-dir":
+				c.DataDir = *dataDir
+			case "chrome-path":
+				c.ChromePath = *chromePath
+			case "chrome-no-sandbox":
+				c.ChromeNoSandbox = *noSandbox
+			case "ready-selector":
+				c.ReadySelector = *ready
+			case "render-timeout":
+				c.RenderTimeout = *renderTimeout
+			case "origin":
+				c.Origin = *origin
+			case "listen":
+				c.Listen = *listen
+			case "admin-listen":
+				c.AdminListen = *admin
+			case "verify-crawlers":
+				c.VerifyCrawlers = *verifyCrawlers
+			}
+		})
+		if token, ok := os.LookupEnv("RENDERCACHE_EDGE_TOKEN"); ok {
+			c.EdgeToken = token
+		}
+		if token, ok := os.LookupEnv("RENDERCACHE_ADMIN_TOKEN"); ok {
+			c.AdminToken = token
+		}
+		return c, c.Validate()
 	}
-	if token, ok := os.LookupEnv("RENDERCACHE_ADMIN_TOKEN"); ok {
-		c.AdminToken = token
-	}
-	if err := c.Validate(); err != nil {
+	c, err := load()
+	if err != nil {
 		return err
 	}
 	if *olderThan != "" && args[0] != "prune" {
@@ -222,6 +233,38 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) error {
 		return fmt.Errorf("delivery log: %w", err)
 	}
 	g.SetDeliveryLog(receipts)
+	verifier, err := verify.New(verify.Options{Sources: verify.Builtin, Dir: filepath.Join(c.DataDir, "crawlers")})
+	if err != nil {
+		return err
+	}
+	g.SetVerifier(verifier)
+	// The range lists are fetched only once verification is on, at start or
+	// after a reload turns it on.
+	var startRanges sync.Once
+	rangesOn := func() { startRanges.Do(func() { verifier.Start(workCtx) }) }
+	if c.VerifyCrawlers {
+		rangesOn()
+	}
+	reload := func(ctx context.Context, fetch bool) (proxy.Reload, error) {
+		next, err := load()
+		if err != nil {
+			return proxy.Reload{}, err
+		}
+		result, err := g.Apply(next)
+		if err != nil {
+			return result, err
+		}
+		if g.Settings().VerifyCrawlers {
+			rangesOn()
+			if fetch {
+				if err := g.RefreshRanges(ctx); err != nil {
+					result.RangesError = err.Error()
+				}
+			}
+		}
+		return result, nil
+	}
+	g.SetReloader(func(ctx context.Context) (proxy.Reload, error) { return reload(ctx, true) })
 	publicLn, err := net.Listen("tcp", c.Listen)
 	if err != nil {
 		return fmt.Errorf("public listener: %w", err)
@@ -284,10 +327,27 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) error {
 		go func(s *http.Server, l net.Listener) { errCh <- s.Serve(l) }(entry.s, entry.l)
 	}
 	lifecycleErr := boundedInfo(logger, "listening", "public", publicLn.Addr().String(), "admin", adminLn.Addr().String(), "origin", c.Origin, "warming_enabled", c.WarmEnabled, "snapshot_serving_enabled", c.SnapshotEnabled)
+	hup := make(chan os.Signal, 1)
+	if len(reloadSignals) > 0 {
+		signal.Notify(hup, reloadSignals...)
+		defer signal.Stop(hup)
+	}
 	var serveErr error
-	select {
-	case <-ctx.Done():
-	case serveErr = <-errCh:
+wait:
+	for {
+		select {
+		case <-ctx.Done():
+			break wait
+		case serveErr = <-errCh:
+			break wait
+		case <-hup:
+			result, err := reload(ctx, false)
+			if err != nil {
+				lifecycleErr = errors.Join(lifecycleErr, boundedInfo(logger, "reload refused", "error", err.Error()))
+			} else {
+				lifecycleErr = errors.Join(lifecycleErr, boundedInfo(logger, "reloaded", "applied", result.Applied, "restart_required", result.RestartRequired))
+			}
+		}
 	}
 	stopWarming()
 	duration, _ := time.ParseDuration(c.ShutdownTimeout)
@@ -325,8 +385,9 @@ func newRenderer(c config.Config) (*render.Chrome, error) {
 	return render.NewChrome(render.Options{ChromePath: c.ChromePath, NoSandbox: c.ChromeNoSandbox, Timeout: timeout, Settle: settle, ReadySelector: c.ReadySelector, MaxHTMLBytes: c.MaxHTMLBytes, AllowedOrigins: c.RenderAllowOrigins, Concurrency: c.RenderConcurrency})
 }
 
-// Only two lifecycle messages are emitted per process. A stuck stderr consumer
-// may strand at most two writes; it must never hold shutdown indefinitely.
+// Lifecycle messages (start, stop, and one per reload) are written with a
+// deadline: a stuck stderr consumer may strand a write, but it must never
+// hold shutdown or a reload indefinitely.
 func boundedInfo(logger *slog.Logger, message string, args ...any) error {
 	done := make(chan error, 1)
 	record := slog.NewRecord(time.Now(), slog.LevelInfo, message, 0)

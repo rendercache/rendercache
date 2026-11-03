@@ -124,7 +124,7 @@ func TestOriginFailureAndAdmin(t *testing.T) {
 	if w.Code != 502 || w.Header().Get("X-RenderCache") != "MISS" {
 		t.Fatal(w.Code, w.Header())
 	}
-	g.cfg.AdminToken = "secret"
+	g.edit(func(c *config.Config) { c.AdminToken = "secret" })
 	for _, token := range []string{"", "Bearer wrong", "Bearer secret"} {
 		r := httptest.NewRequest("GET", "http://admin/status", nil)
 		r.Header.Set("Authorization", token)
@@ -260,7 +260,7 @@ func TestBypassPathsAndAssetVary(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "ok") }))
 	defer upstream.Close()
 	g := gateway(t, upstream.URL)
-	g.cfg.BypassPaths = []string{"/api", "/graphql", "/wp-json/"}
+	g.edit(func(c *config.Config) { c.BypassPaths = []string{"/api", "/graphql", "/wp-json/"} })
 	for path, want := range map[string]string{"/graphql": "api", "/graphql/v2": "api", "/wp-json/wp/v2": "api", "/graphqlish": "human", "/api": "api", "/app.js": "asset", "/about": "human"} {
 		r := httptest.NewRequest("GET", "http://public.test"+path, nil)
 		if got := g.classify(r).Reason; got != want {

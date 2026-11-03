@@ -61,6 +61,12 @@ type Config struct {
 	TrustedProxies      []string `json:"trusted_proxies"`
 	OriginTimeout       string   `json:"origin_timeout"`
 	ShutdownTimeout     string   `json:"shutdown_timeout"`
+	// VerifyCrawlers checks a crawler's address against the ranges or
+	// reverse DNS its operator publishes before it gets a snapshot.
+	VerifyCrawlers bool `json:"verify_crawlers"`
+	// UnverifiableCrawlers decides, with verify_crawlers on, what crawlers
+	// whose operator publishes no way to check them get: "snapshot" or "live".
+	UnverifiableCrawlers string `json:"unverifiable_crawlers"`
 }
 
 func Default() Config {
@@ -81,6 +87,8 @@ func Default() Config {
 		BypassPaths:       []string{"/api"},
 		IgnoreQueryParams: []string{"utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "gclid", "fbclid", "msclkid"},
 		TrustedProxies:    []string{"127.0.0.0/8", "::1/128"},
+
+		UnverifiableCrawlers: "snapshot",
 	}
 }
 
@@ -253,6 +261,9 @@ func (c Config) Validate() error {
 	}
 	if _, err := c.TrustedPrefixes(); err != nil {
 		return err
+	}
+	if c.UnverifiableCrawlers != "snapshot" && c.UnverifiableCrawlers != "live" {
+		return errors.New(`unverifiable_crawlers must be "snapshot" or "live"`)
 	}
 	return nil
 }

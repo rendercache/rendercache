@@ -35,6 +35,8 @@ PROMISES = [
     ("TestRejectSymlinksInsideAndOutsideRoot", "Data files never follow links"),
     ("TestExclusiveProcessLock", "Only one process can own a data directory"),
     ("TestTrustedEdgeForwardingHeaders", "Only a trusted edge can set forwarding headers for the origin"),
+    ("TestSpoofedCrawlerGetsLiveSite", "With verification on, a request that only claims to be a crawler gets the live site"),
+    ("TestServeReloadsConfigOnAdminPost", "A reload applies new bot rules without a restart, and a broken file changes nothing"),
 ]
 
 

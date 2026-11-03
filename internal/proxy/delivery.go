@@ -63,14 +63,15 @@ func crawler(r *http.Request, bots []string) string { // Classify can bypass bef
 	return Classify(check, bots).Crawler
 }
 func (g *Gateway) SetDeliveryLog(l *delivery.Log) { g.deliveries = l }
-func (g *Gateway) observe(w http.ResponseWriter, r *http.Request, route Route) (http.ResponseWriter, func()) {
-	claim := crawler(r, g.cfg.Bots)
+func (g *Gateway) observe(w http.ResponseWriter, r *http.Request, set *settings, current *Route) (http.ResponseWriter, func()) {
+	claim := crawler(r, set.cfg.Bots)
 	if claim == "" || g.deliveries == nil {
 		return w, func() {}
 	}
 	started := time.Now()
 	rw := &receipt{ResponseWriter: w}
 	return rw, func() {
+		route := *current
 		interrupted := recover()
 		if interrupted != nil {
 			rw.failed = true
@@ -89,7 +90,7 @@ func (g *Gateway) observe(w http.ResponseWriter, r *http.Request, route Route) (
 		if outcome == "" {
 			outcome = route.Outcome
 		}
-		g.deliveries.Record(delivery.Event{Time: started.UTC(), Crawler: claim, Path: r.URL.EscapedPath(), Method: r.Method, Status: status, Cache: outcome, Reason: route.Reason, Age: age, Bytes: rw.bytes, DurationMS: time.Since(started).Milliseconds(), Cached: rw.cached, FullHTML: rw.cached && status == 200 && r.Method == "GET" && !rw.failed && rw.expected > 0 && rw.bytes == rw.expected, Simulated: simulated, WriteFailed: rw.failed, Upgraded: rw.status == 101})
+		g.deliveries.Record(delivery.Event{Time: started.UTC(), Crawler: claim, Path: r.URL.EscapedPath(), Method: r.Method, Status: status, Cache: outcome, Reason: route.Reason, Check: route.Check, Age: age, Bytes: rw.bytes, DurationMS: time.Since(started).Milliseconds(), Cached: rw.cached, FullHTML: rw.cached && status == 200 && r.Method == "GET" && !rw.failed && rw.expected > 0 && rw.bytes == rw.expected, Simulated: simulated, WriteFailed: rw.failed, Upgraded: rw.status == 101})
 		if interrupted != nil {
 			panic(interrupted)
 		}

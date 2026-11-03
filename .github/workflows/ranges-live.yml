@@ -1,0 +1,26 @@
+name: Crawler ranges (live)
+# Run by hand: fetches every crawler range list RenderCache knows from its
+# operator and reports each as a notice. CI itself never touches the network.
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  ranges:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.2'
+          cache: true
+      - name: Fetch the published lists
+        env:
+          RENDERCACHE_TEST_LIVE_RANGES: '1'
+        run: |
+          go test -count=1 -run TestLiveRanges -v ./internal/verify > live.txt 2>&1 || status=$?
+          grep '^::' live.txt || true
+          if [ "${status:-0}" != 0 ]; then
+            grep -E 'verify_test.go|Error' live.txt | sed 's/^/::error title=ranges::/' || true
+            exit 1
+          fi

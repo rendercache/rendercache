@@ -8,13 +8,11 @@ go build -o bin/rendercache ./cmd/rendercache
 curl -I -A GPTBot http://127.0.0.1:8080/    # X-RenderCache: MISS, then HIT once warmed
 ```
 
-The admin page on `127.0.0.1:9090` shows what a crawler gets next to the raw HTML, which words only appear after rendering, and a log of every crawler delivery. Details follow.
+The admin page on `127.0.0.1:9090` shows what a crawler gets next to the raw HTML, which words only appear after rendering, and a log of every crawler delivery. With `--verify-crawlers`, a request that only claims to be Googlebot or GPTBot gets the live app: the crawler's address has to be in the ranges its operator publishes, or pass a reverse DNS check.
 
-A self-hosted pre-render cache for JavaScript sites, designed to prepare HTML before bots and AI crawlers arrive.
+**Version 0.2.0, for Linux, macOS and Windows.** RenderCache warms pages from sitemaps, stores rendered responses and serves them to crawlers. Humans receive the ordinary app. Fresh snapshots return `HIT`; expired snapshots return `STALE` while a deduplicated refresh runs in the background. A cold `MISS` proxies the origin immediately and requests background rendering. The protected admin page compares raw HTML with a saved snapshot, highlights missing text and shows rotating delivery receipts. Snapshot quotas, explicit prune, process locking, constrained HTTP work and Docker/deployment/release packaging are included. This is an early release for evaluation, not a production-readiness claim.
 
-**Version 0.2.0 — Linux, macOS and Windows.** RenderCache warms JavaScript pages from sitemaps, stores rendered responses and serves them to recognized crawler claims. Humans receive the ordinary app. Fresh snapshots return `HIT`; expired snapshots return `STALE` while a deduplicated refresh runs in the background. A cold `MISS` proxies the origin immediately and requests background rendering. The protected admin page compares raw HTML with a saved snapshot, highlights missing text and shows rotating delivery receipts. Snapshot quotas, explicit prune, process locking, constrained HTTP work and Docker/deployment/release packaging are included. This is an early release for evaluation, not a production-readiness claim.
-
-## Run the current checkpoint
+## Build and run
 
 Requires Go 1.26 or later. Rendering additionally requires a local Chrome/Chromium executable. The Go binary controls Chrome directly over a pipe; no Node.js service is required.
 
@@ -23,7 +21,7 @@ go build -o bin/rendercache ./cmd/rendercache
 ./bin/rendercache serve --origin https://app.example.com
 ```
 
-The public listener defaults to `:8080`. A separate administration listener defaults to `127.0.0.1:9090`. Terminate with SIGINT or SIGTERM for graceful shutdown. The origin must be a site-root HTTP(S) URL, not the public RenderCache address: using the proxy as its own origin creates a loop.
+The public listener defaults to `:8080`. A separate administration listener defaults to `127.0.0.1:9090`. Terminate with SIGINT or SIGTERM for graceful shutdown. SIGHUP (or `POST /reload` on the admin listener) reloads the configuration; see Configuration. The origin must be a site-root HTTP(S) URL, not the public RenderCache address: using the proxy as its own origin creates a loop.
 
 Try the JavaScript fixture from the repository root in one terminal:
 
@@ -120,9 +118,24 @@ curl -X POST -H 'Authorization: Bearer choose-a-local-secret' \
 
 The endpoint accepts exactly one public URL (or root-relative path) and returns 202 with queued/coalesced state while preserving any existing copy. It rejects foreign URLs, API/assets, invalid input and wrong methods. An unconfigured token or disabled warming returns 503; a wrong/missing configured token returns 401. `--snapshots=false` disables serving while allowing scheduled warming to continue.
 
+## Verified crawlers
+
+A user agent is a claim anyone can make. With `verify_crawlers` on (or `--verify-crawlers`), RenderCache checks the claim before it serves a snapshot:
+
+- **Published ranges.** Google, Bing, DuckDuckGo, OpenAI (GPTBot, OAI-SearchBot, ChatGPT-User), Anthropic (ClaudeBot, Claude-SearchBot, Claude-User), Perplexity, Apple and Common Crawl publish the addresses their crawlers use as JSON lists. RenderCache fetches each list when verification is turned on and then once a day (every 15 minutes after a failure), keeps the last good copy under `data_dir/crawlers` and uses it at the next start. A list that fails to download or parse never replaces a good one.
+- **Reverse DNS.** For Googlebot, Bingbot, Applebot, CCBot, YandexBot and Baiduspider, an address outside the lists can still pass: its reverse DNS name must end in the operator's domain (for example `.googlebot.com` or `.search.msn.com`) and resolve back to the same address. Lookups take at most two seconds, run at most 16 at once, and the answers are kept for six hours (30 minutes when the check failed).
+
+A request whose user agent names a crawler that can be checked, and whose address fails the check, gets the live app with `X-RenderCache: BYPASS` and reason `unverified`. A crawler never waits for Chrome either way: the live app is what any visitor gets, so a failed check costs the crawler a rendered page, never a wrong one. When the user agent names several crawlers, passing the check for any one of them is enough, and naming a checkable crawler is never outweighed by also naming an uncheckable one.
+
+RenderCache knows no published check for the other default crawlers: Meta's, Bytespider, Amazonbot (Amazon publishes its addresses as web pages, not as list files), and the link-preview bots of Slack, Discord, LinkedIn and X. `unverifiable_crawlers` decides what they get: `snapshot` (the default, as before verification) or `live`. RenderCache can't tell these crawlers from someone using their name.
+
+The client address is the peer's, or, when the peer is in `trusted_proxies` or the request carries a matching `edge_token`, the last X-Forwarded-For address that isn't itself a trusted proxy. The nginx and Cloudflare Worker examples in `deploy/` send the visitor's address that way. A malformed X-Forwarded-For chain verifies nothing. `/status` lists each range source with its prefix count, last update and last error, under `crawler_verification`.
+
+Verification is off by default, so upgrading changes nothing until you turn it on. It is not a defence against an attacker who controls an address in a crawler's range, and serving a verified crawler is not proof that the page is indexed or cited.
+
 ## Configuration
 
-`--config` loads a strict JSON object; unknown fields and files larger than 1 MiB are rejected. CLI flags `--origin`, `--public-url`, `--listen`, `--admin-listen`, `--data-dir`, `--chrome-path`, `--chrome-no-sandbox`, `--ready-selector`, `--render-timeout`, `--warm`, `--sitemap`, `--warm-interval`, `--sitemap-interval`, `--snapshots` and `--snapshot-ttl` override the corresponding file values. The `RENDERCACHE_ADMIN_TOKEN` and `RENDERCACHE_EDGE_TOKEN` environment variables override their respective JSON secrets, including when explicitly empty. Tokens cannot contain newlines or exceed 1024 bytes. Configuration and bot lists load at startup; restart to apply changes. At most 256 crawler patterns (1..128 bytes each), 64 extra render origins, 128 root sitemaps and a 4096-byte ready selector are accepted. Supplying `bots` replaces the default list, and an empty array disables classification. `--sitemap` replaces `sitemap_urls` with one entry; JSON supports several root sitemaps.
+`--config` loads a strict JSON object; unknown fields and files larger than 1 MiB are rejected. CLI flags `--origin`, `--public-url`, `--listen`, `--admin-listen`, `--data-dir`, `--chrome-path`, `--chrome-no-sandbox`, `--ready-selector`, `--render-timeout`, `--warm`, `--sitemap`, `--warm-interval`, `--sitemap-interval`, `--snapshots`, `--snapshot-ttl` and `--verify-crawlers` override the corresponding file values. The `RENDERCACHE_ADMIN_TOKEN` and `RENDERCACHE_EDGE_TOKEN` environment variables override their respective JSON secrets, including when explicitly empty. Tokens cannot contain newlines or exceed 1024 bytes. SIGHUP (not on Windows) or an authenticated `POST /reload` on the admin listener reads the file again, with the same flags and environment variables, and applies `bots`, `bypass_paths`, `ignore_query_params`, `trusted_proxies`, `edge_token`, `admin_token`, `snapshot_ttl`, `verify_crawlers` and `unverifiable_crawlers` without a restart. Requests already running finish with the settings they started with. Other settings that changed are listed under `restart_required` and keep their running values; an invalid file is refused (422 from `/reload`) and changes nothing. `POST /reload` also fetches the crawler range lists again when verification is on. At most 256 crawler patterns (1..128 bytes each), 64 extra render origins, 128 root sitemaps and a 4096-byte ready selector are accepted. Supplying `bots` replaces the default list, and an empty array disables classification. `--sitemap` replaces `sitemap_urls` with one entry; JSON supports several root sitemaps.
 
 | Setting | Default | Purpose |
 | --- | --- | --- |
@@ -168,7 +181,9 @@ The endpoint accepts exactly one public URL (or root-relative path) and returns 
 | `bots` | search, AI and preview crawler patterns, including Google-InspectionTool for Search Console tests | Case-insensitive user-agent substring matches |
 | `bypass_paths` | `["/api"]` | Path prefixes that always go to the origin, for example `/graphql` or `/wp-json` |
 | `ignore_query_params` | utm_source, utm_medium, utm_campaign, utm_term, utm_content, gclid, fbclid, msclkid | Exact parameter names left out of the snapshot identity, case-insensitive (no wildcards). Also applied to purge and compare |
-| `trusted_proxies` | `["127.0.0.0/8", "::1/128"]` | Peers whose X-Forwarded-For/Proto/Host are passed to the origin |
+| `trusted_proxies` | `["127.0.0.0/8", "::1/128"]` | Peers whose X-Forwarded-For/Proto/Host are passed to the origin, and whose X-Forwarded-For gives the client address for crawler verification |
+| `verify_crawlers` | `false` | Check a crawler's address against its operator's published ranges or reverse DNS before serving a snapshot; see Verified crawlers |
+| `unverifiable_crawlers` | `snapshot` | With verification on, what crawlers that can't be checked get: `snapshot` or `live` |
 
 Every admin route requires `Authorization: Bearer <token>` or HTTP Basic authentication (username `rendercache`, password the token) when a token is configured. Browsers receive a Basic challenge. Use HTTPS or a local tunnel for remote administration; Basic and bearer credentials both require transport protection. Use the environment variable rather than committing a real token. `/healthz` reports process health; `/status` reports routing counters and reports warming status and whether automatic warming is enabled; shows whether snapshot serving is enabled. These endpoints are not mounted on the public listener. Public `/status` requests still go to the origin.
 
@@ -194,7 +209,7 @@ Text extraction ignores head, script, style, template, noscript, hidden and aria
 
 Each recognized crawler claim is recorded after response handling, including private/API/protocol bypasses. Events contain a bounded crawler pattern, path without query/fragment, method, actual response status, HIT/STALE/MISS/BYPASS, snapshot age, HTTP body bytes accepted by the response writer and duration. No request headers, raw user agents, query strings, raw page bodies or upstream error strings enter these records. Paths themselves may contain sensitive data; control access and retention accordingly. Differing query variants intentionally share a logged path.
 
-`cached_response` includes saved HTML, redirects and removals. `full_snapshot_html` requires a complete successful GET of a nonempty 200 snapshot with no write failure. HEAD, 304, redirects, removals, misses and partial writes are false. These are server-side write receipts, not proof that a remote client read the body. Protocol upgrades are labeled `protocol_upgrade`; tunneled traffic is outside HTTP body accounting. A user-agent match is a claim, not verified identity; receipts do not prove indexing or AI citation.
+`cached_response` includes saved HTML, redirects and removals. `full_snapshot_html` requires a complete successful GET of a nonempty 200 snapshot with no write failure. HEAD, 304, redirects, removals, misses and partial writes are false. These are server-side write receipts, not proof that a remote client read the body. Protocol upgrades are labeled `protocol_upgrade`; tunneled traffic is outside HTTP body accounting. `crawler_check` says what verification found: `off`, `verified`, `unverified`, `unverifiable` or `simulated` (admin simulations skip the check). Without verification, a user-agent match is a claim, not verified identity; receipts do not prove indexing or AI citation.
 
 Logging uses a 256-event nonblocking queue and one file writer, a 100-event in-memory recent list, 512-byte paths and 128-byte crawler patterns. Defaults retain the current 10 MiB file plus three rotated backups (about 40 MiB maximum). A full queue drops receipts and increments `dropped`; write/open/rotation failures increment `failures` and expose a bounded operation name. These counters and recent receipts appear in `/status` under `delivery_log`. `accepted` means queued; `written` means a successful file write, not fsync durability. Counts/recent receipts reset on restart; files survive. One process must own each data directory; serve/render/prune enforce an advisory lock. Incomplete final JSON lines can occur after a crash or failed write; readers should skip them.
 

@@ -58,7 +58,7 @@ func demoGateway(t *testing.T, origin http.Handler) (*Gateway, *delivery.Log) {
 }
 func adminJSON(g *Gateway, path, body string) *httptest.ResponseRecorder {
 	r := httptest.NewRequest("POST", "http://admin.test"+path, strings.NewReader(body))
-	r.Header.Set("Authorization", "Bearer "+g.cfg.AdminToken)
+	r.Header.Set("Authorization", "Bearer "+g.conf().cfg.AdminToken)
 	r.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	g.AdminHandler().ServeHTTP(w, r)
@@ -255,7 +255,7 @@ func TestInterruptedDeliveryIsMarkedFailed(t *testing.T) {
 				t.Error("abort was swallowed")
 			}
 		}()
-		_, finish := g.observe(httptest.NewRecorder(), r, Route{Outcome: "MISS"})
+		_, finish := g.observe(httptest.NewRecorder(), r, g.conf(), &Route{Outcome: "MISS"})
 		defer finish()
 		panic(http.ErrAbortHandler)
 	}()

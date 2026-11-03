@@ -30,7 +30,7 @@ func (g *Gateway) authorized(r *http.Request) bool {
 	if user, password, ok := r.BasicAuth(); ok && user == "rendercache" {
 		candidate = password
 	}
-	return subtle.ConstantTimeCompare([]byte(candidate), []byte(g.cfg.AdminToken)) == 1
+	return subtle.ConstantTimeCompare([]byte(candidate), []byte(g.conf().cfg.AdminToken)) == 1
 }
 func (g *Gateway) deliveryStatus() delivery.Status {
 	if g.deliveries == nil {
@@ -102,7 +102,7 @@ func (g *Gateway) demoPage(w http.ResponseWriter, r *http.Request) (target.Page,
 	}
 	check, _ := http.NewRequest("GET", p.URL, nil)
 	check.Header.Set("User-Agent", "RenderCache-Demo")
-	if ClassifyPaths(check, []string{"RenderCache-Demo"}, g.cfg.BypassPaths).Outcome != "MISS" {
+	if ClassifyPaths(check, []string{"RenderCache-Demo"}, g.conf().cfg.BypassPaths).Outcome != "MISS" {
 		failure(w, 400, "URL is not an eligible HTML page")
 		return target.Page{}, false
 	}
@@ -185,7 +185,7 @@ func (g *Gateway) simulate(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if len(g.cfg.Bots) == 0 || g.deliveries == nil {
+	if len(g.conf().cfg.Bots) == 0 || g.deliveries == nil {
 		failure(w, 503, "crawler rules and delivery logging must be enabled")
 		return
 	}
@@ -199,8 +199,8 @@ func (g *Gateway) simulate(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(context.WithValue(r.Context(), simulatedKey{}, true), 5*time.Second)
 	defer cancel()
 	request, _ := http.NewRequestWithContext(ctx, "GET", p.URL, nil)
-	request.Header.Set("User-Agent", g.cfg.Bots[0])
-	request.Header.Set("X-RenderCache-Edge-Key", g.cfg.EdgeToken)
+	request.Header.Set("User-Agent", g.conf().cfg.Bots[0])
+	request.Header.Set("X-RenderCache-Edge-Key", g.conf().cfg.EdgeToken)
 	request.Header.Set("Accept", "text/html")
 	sink := &discardResponse{header: make(http.Header)}
 	// ReverseProxy may abort a streamed response with ErrAbortHandler. Preserve
@@ -220,7 +220,7 @@ func (g *Gateway) simulate(w http.ResponseWriter, r *http.Request) {
 	}()
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
-	_ = json.NewEncoder(w).Encode(map[string]any{"simulated": true, "crawler_claim": g.cfg.Bots[0], "status": sink.status, "cache": sink.header.Get("X-RenderCache"), "delivered_bytes": sink.bytes, "aborted": aborted, "meaning": "Local simulation only; no external crawler visited. Delivery records do not prove indexing or citation."})
+	_ = json.NewEncoder(w).Encode(map[string]any{"simulated": true, "crawler_claim": g.conf().cfg.Bots[0], "status": sink.status, "cache": sink.header.Get("X-RenderCache"), "delivered_bytes": sink.bytes, "aborted": aborted, "meaning": "Local simulation only; no external crawler visited. Delivery records do not prove indexing or citation."})
 }
 
 type discardResponse struct {

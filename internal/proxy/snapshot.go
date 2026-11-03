@@ -20,9 +20,9 @@ func (g *Gateway) request(p target.Page, reason string) (string, error) {
 	}
 	return g.warming.Request(p, reason)
 }
-func (g *Gateway) snapshot(w http.ResponseWriter, r *http.Request, route Route) bool {
+func (g *Gateway) snapshot(w http.ResponseWriter, r *http.Request, set *settings, route Route) bool {
 	// Request Host/forwarding claims never select the namespace or origin.
-	p, err := target.Map(g.cfg.SiteURL(), g.cfg.Origin, g.snapshotURI(r.URL.RequestURI()))
+	p, err := target.Map(set.cfg.SiteURL(), set.cfg.Origin, g.snapshotURI(r.URL.RequestURI()))
 	if err != nil {
 		return false
 	}
@@ -39,7 +39,7 @@ func (g *Gateway) snapshot(w http.ResponseWriter, r *http.Request, route Route) 
 		g.warming.Observe(p, record)
 	}
 	outcome := "HIT"
-	if time.Since(record.CreatedAt) >= g.ttl || record.CreatedAt.After(time.Now().Add(time.Minute)) {
+	if time.Since(record.CreatedAt) >= set.ttl || record.CreatedAt.After(time.Now().Add(time.Minute)) {
 		outcome = "STALE"
 		_, _ = g.request(p, "stale")
 		g.stale.Add(1)
@@ -88,8 +88,9 @@ func (g *Gateway) snapshot(w http.ResponseWriter, r *http.Request, route Route) 
 // so query variants share one snapshot. Remaining parameters keep their
 // original order and escaping. The origin still receives the full URL on a miss.
 func (g *Gateway) snapshotURI(uri string) string {
+	ignored := g.conf().ignored
 	path, query, ok := strings.Cut(uri, "?")
-	if !ok || len(g.ignored) == 0 {
+	if !ok || len(ignored) == 0 {
 		return uri
 	}
 	kept := make([]string, 0, 4)
@@ -98,7 +99,7 @@ func (g *Gateway) snapshotURI(uri string) string {
 		if decoded, err := url.QueryUnescape(name); err == nil {
 			name = decoded
 		}
-		if part != "" && g.ignored[strings.ToLower(name)] {
+		if part != "" && ignored[strings.ToLower(name)] {
 			continue
 		}
 		kept = append(kept, part)
@@ -112,7 +113,7 @@ func (g *Gateway) snapshotURI(uri string) string {
 // mapPage maps an admin-supplied URL (purge, compare) to the same page a
 // crawler request for it would use, with ignored query parameters removed.
 func (g *Gateway) mapPage(raw string) (target.Page, error) {
-	p, err := target.Map(g.cfg.SiteURL(), g.cfg.Origin, raw)
+	p, err := target.Map(g.conf().cfg.SiteURL(), g.conf().cfg.Origin, raw)
 	if err != nil {
 		return p, err
 	}
@@ -120,7 +121,7 @@ func (g *Gateway) mapPage(raw string) (target.Page, error) {
 	if err != nil {
 		return p, err
 	}
-	return target.Map(g.cfg.SiteURL(), g.cfg.Origin, g.snapshotURI(u.RequestURI()))
+	return target.Map(g.conf().cfg.SiteURL(), g.conf().cfg.Origin, g.snapshotURI(u.RequestURI()))
 }
 func notModified(r *http.Request, etag string, created time.Time) bool {
 	if value := r.Header.Get("If-None-Match"); value != "" {
@@ -145,7 +146,7 @@ func (g *Gateway) purge(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(code)
 		json.NewEncoder(w).Encode(map[string]string{"error": message})
 	}
-	if g.cfg.AdminToken == "" {
+	if g.conf().cfg.AdminToken == "" {
 		failure(http.StatusServiceUnavailable, "configure an admin token before using purge")
 		return
 	}
@@ -165,7 +166,7 @@ func (g *Gateway) purge(w http.ResponseWriter, r *http.Request) {
 	}
 	check, _ := http.NewRequest(http.MethodGet, p.URL, nil)
 	check.Header.Set("User-Agent", "RenderCache-Purge")
-	if ClassifyPaths(check, []string{"RenderCache-Purge"}, g.cfg.BypassPaths).Outcome != "MISS" {
+	if ClassifyPaths(check, []string{"RenderCache-Purge"}, g.conf().cfg.BypassPaths).Outcome != "MISS" {
 		failure(400, "URL is not an eligible HTML page")
 		return
 	}

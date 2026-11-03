@@ -61,7 +61,7 @@ func cachedGateway(t *testing.T) (*Gateway, *snapshot.Store, string, *atomic.Int
 	return g, store, dir, &calls
 }
 func mapped(g *Gateway, path string) target.Page {
-	p, _ := target.Map(g.cfg.SiteURL(), g.cfg.Origin, path)
+	p, _ := target.Map(g.conf().cfg.SiteURL(), g.conf().cfg.Origin, path)
 	return p
 }
 func bot(g *Gateway, method, path string, headers map[string]string) *httptest.ResponseRecorder {
@@ -87,7 +87,7 @@ func waitFor(t *testing.T, f func() bool) {
 }
 func attach(t *testing.T, g *Gateway, s *snapshot.Store, engine engineFunc, extra int) *warm.Manager {
 	t.Helper()
-	m, err := warm.New(warm.Options{Site: g.cfg.SiteURL(), Origin: g.cfg.Origin, RefreshInterval: time.Hour, DiscoveryInterval: time.Hour, RetryBase: 50 * time.Millisecond, RetryMax: time.Second, Workers: 1, QueueSize: 1, MaxPages: 10, MaxExtraPages: extra, Tick: time.Millisecond}, sourceFunc(func(context.Context) ([]target.Page, error) { return nil, nil }), engine, s)
+	m, err := warm.New(warm.Options{Site: g.conf().cfg.SiteURL(), Origin: g.conf().cfg.Origin, RefreshInterval: time.Hour, DiscoveryInterval: time.Hour, RetryBase: 50 * time.Millisecond, RetryMax: time.Second, Workers: 1, QueueSize: 1, MaxPages: 10, MaxExtraPages: extra, Tick: time.Millisecond}, sourceFunc(func(context.Context) ([]target.Page, error) { return nil, nil }), engine, s)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,7 +214,7 @@ func TestColdCapacityAndPurgeAuthentication(t *testing.T) {
 	}
 	close(gate)
 	waitFor(t, func() bool { return m.Status().RenderSuccesses >= 2 }) // purge during render schedules one follow-up
-	g.cfg.AdminToken = ""
+	g.edit(func(c *config.Config) { c.AdminToken = "" })
 	if purge("POST", "url=/cold", "").Code != 503 {
 		t.Fatal("purge allowed without configured token")
 	}
