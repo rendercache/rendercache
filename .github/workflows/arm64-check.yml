@@ -1,0 +1,31 @@
+name: arm64 check
+# Run by hand: the arm64 parts of the release workflow, without publishing.
+# Builds the Linux arm64 archive, smoke-tests it against Debian's Chromium,
+# and builds and runs the container image natively on an arm64 runner.
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  arm64:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.2'
+      - name: Archive and smoke test
+        run: |
+          bash scripts/build-release.sh dist linux arm64
+          mkdir -p extracted && tar -xzf dist/rendercache_linux_arm64.tar.gz -C extracted
+          extracted/rendercache version | grep -F linux/arm64
+          docker run --rm -v "$PWD:/w" -w /w -e RENDERCACHE_TEST_NO_SANDBOX=1 debian:bookworm-slim sh -c \
+            'apt-get update -qq && apt-get install -y -qq --no-install-recommends chromium python3 ca-certificates fonts-liberation >/dev/null && python3 scripts/smoke.py --binary extracted/rendercache --chrome /usr/bin/chromium' > smoke.txt 2>&1 \
+            || { sed 's/^/::error title=arm64 smoke::/' smoke.txt | tail -20; exit 1; }
+          echo "::notice title=arm64 smoke::$(tail -1 smoke.txt)"
+      - name: Image build and container smoke
+        run: |
+          docker build --build-arg COMMIT="$GITHUB_SHA" -t rendercache:test .
+          docker run --rm rendercache:test version | grep -F linux/arm64
+          python3 scripts/container-smoke.py > csmoke.txt 2>&1 || { sed 's/^/::error title=container smoke::/' csmoke.txt | tail -20; exit 1; }
+          echo "::notice title=container smoke::$(docker run --rm rendercache:test version)"
