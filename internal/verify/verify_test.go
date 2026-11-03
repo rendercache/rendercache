@@ -398,3 +398,27 @@ func TestReview030Named(t *testing.T) {
 		t.Errorf("got %v", got)
 	}
 }
+
+// Second review round: a kept list with a file time in the future still
+// expires, and /status says when a list is too old to use.
+func TestReview030bFutureMtimeAndExpiredStatus(t *testing.T) {
+	dir := t.TempDir()
+	src := []Source{{Crawler: "GPTBot", RangesURL: "https://ranges.test/g.json"}}
+	v := newVerifier(t, Options{Sources: src, Dir: dir})
+	v.keep("https://ranges.test/g.json", []byte(`{"prefixes":[{"ipv4Prefix":"203.0.113.0/24"}]}`))
+	future := time.Now().Add(365 * 24 * time.Hour)
+	os.Chtimes(v.file("https://ranges.test/g.json"), future, future)
+	kept := newVerifier(t, Options{Sources: src, Dir: dir})
+	kept.loadKept(kept.lists["https://ranges.test/g.json"])
+	in := netip.MustParseAddr("203.0.113.9")
+	if kept.Check(context.Background(), "GPTBot", in) != Verified {
+		t.Fatal("kept list not used")
+	}
+	kept.now = func() time.Time { return time.Now().Add(maxListAge + 24*time.Hour) }
+	if got := kept.Check(context.Background(), "GPTBot", in); got != Pending {
+		t.Errorf("a kept list with a future file time never expired: %s", got)
+	}
+	if st := kept.Status().Lists[0]; !st.Expired {
+		t.Errorf("status of an expired list: %+v", st)
+	}
+}

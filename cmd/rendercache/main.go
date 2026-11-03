@@ -32,7 +32,7 @@ import (
 	"github.com/rendercache/rendercache/internal/warm"
 )
 
-var version = "0.2.0"
+var version = "0.3.0"
 var commit = "unknown"
 
 func main() {
@@ -258,7 +258,12 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) error {
 	if c.VerifyCrawlers {
 		rangesOn()
 	}
+	// One reload at a time, reading and applying together, so a later read
+	// of the file is never overtaken by an earlier one.
+	var reloading sync.Mutex
 	reload := func(ctx context.Context, fetch bool) (proxy.Reload, error) {
+		reloading.Lock()
+		defer reloading.Unlock()
 		next, err := load()
 		if err != nil {
 			return proxy.Reload{}, err

@@ -6,10 +6,10 @@ RenderCache 0.3.0 can check that a crawler is who it says it is, and reloads its
 
 **Client address.** Behind a trusted proxy or a matching edge token, the client is the last X-Forwarded-For address that isn't a trusted proxy; entries with ports are read too. The nginx and Cloudflare Worker examples already send it.
 
-**Delivery log.** Each receipt has a `crawler_check` field: `off`, `verified`, `unverified`, `pending`, `unverifiable` or `simulated`.
+**Delivery log.** Each receipt has a `crawler_check` field: `off`, `verified`, `unverified`, `pending` (the list is not loaded yet, or too old), `unverifiable` or `simulated`.
 
 **Fixed.** A refresh that saved a page while a crawler was opening the same page could make that read fail as if the file were a link, so the crawler got a cold miss. The open is now retried when the file was replaced in between; a link is still refused.
 
-**Reviewed.** An independent review went through the new code twice before the release. Its findings are fixed with tests, among them a reload that could have removed the admin token while the admin listener was still public, and broad bot patterns such as `bot` that let a spoofed GPTBot through.
+**Reviewed.** An independent review went through the new code twice before the release, finding four defects and then two small ones. All are fixed with tests, among them a reload that could have removed the admin token while the admin listener was still public, and broad bot patterns such as `bot` that let a spoofed GPTBot through.
 
 Archives for Linux (amd64), macOS (Apple silicon) and Windows (amd64), with SHA256SUMS. Known limits are listed in the README and the deployment guide.

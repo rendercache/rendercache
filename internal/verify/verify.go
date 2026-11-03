@@ -360,6 +360,9 @@ func (v *Verifier) fetchDue(ctx context.Context) time.Duration {
 	}
 	wait := v.refresh
 	for _, u := range v.order {
+		if ctx.Err() != nil {
+			break
+		}
 		l := v.lists[u]
 		l.mu.Lock()
 		due := l.next
@@ -560,8 +563,12 @@ func (v *Verifier) loadKept(l *list) {
 		return
 	}
 	l.prefixes.Store(&prefixes)
+	updated := info.ModTime()
+	if now := v.now(); updated.After(now) {
+		updated = now // a file time in the future would never expire
+	}
 	l.mu.Lock()
-	l.updated = info.ModTime()
+	l.updated = updated
 	l.mu.Unlock()
 }
 
@@ -572,6 +579,7 @@ type ListStatus struct {
 	Updated     time.Time `json:"updated,omitzero"`
 	LastAttempt time.Time `json:"last_attempt,omitzero"`
 	LastError   string    `json:"last_error,omitempty"`
+	Expired     bool      `json:"expired,omitempty"` // older than 30 days; not used
 }
 
 type Status struct {
@@ -587,6 +595,7 @@ func (v *Verifier) Status() Status {
 		ls := ListStatus{URL: u, Crawlers: append([]string(nil), l.crawlers...)}
 		if p := l.prefixes.Load(); p != nil {
 			ls.Prefixes = len(*p)
+			ls.Expired = v.current(l) == nil
 		}
 		l.mu.Lock()
 		ls.Updated, ls.LastAttempt, ls.LastError = l.updated, l.lastAttempt, l.lastError
