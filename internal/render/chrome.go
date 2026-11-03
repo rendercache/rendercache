@@ -317,30 +317,66 @@ func (c *Chrome) Render(parent context.Context, p target.Page) (Result, error) {
 	}
 	expression := fmt.Sprintf(`(() => {
  const flattenShadow=%t, flattenFrames=%t, maxFrameDepth=3;
- let shadowRoots=0, frames=0;
+ let shadowRoots=0, frames=0, frameBudget=20;
  // Styles of shadow roots and frames are scoped there; written into the page
  // they would restyle it, so they are left out.
  const scopedStyle=n=>n.nodeType===1&&n.getRootNode()!==document&&(n.localName==='style'||(n.localName==='link'&&/(^|\s)stylesheet(\s|$)/i.test(n.getAttribute('rel')||'')));
+ // A frame's relative URLs resolve against the frame's own address; written
+ // into the page they are made absolute.
+ const urlAttrs=['href','src','action','formaction','poster','data','cite','background'];
+ const absolute=(copy,n)=>{
+  if(n.ownerDocument===document)return;
+  const base=n.baseURI;
+  for(const a of urlAttrs){const v=n.getAttribute(a);if(v!==null&&v.trim()!==''&&!/^\s*(#|javascript:|data:|mailto:|tel:)/i.test(v)){try{copy.setAttribute(a,new URL(v.trim(),base).href)}catch(e){}}}
+  const set=n.getAttribute('srcset');
+  if(set){copy.setAttribute('srcset',set.split(',').map(c=>{const p=c.trim().split(/\s+/);try{if(p[0])p[0]=new URL(p[0],base).href}catch(e){}return p.join(' ')}).join(', '))}
+ };
+ const page=u=>u.origin+u.pathname;
+ const ancestors=[page(location)];
+ // loadedFrame returns the frame's document only when it holds a page of
+ // this site that loaded with status 200: not a frame that hasn't loaded
+ // (lazy frames hold an empty about:blank), not an error page, not one that
+ // went elsewhere, and not a page already being written (a page that frames
+ // itself).
+ const loadedFrame=n=>{
+  if(frameBudget<=0)return null;
+  let doc=null,win=null;try{doc=n.contentDocument;win=n.contentWindow}catch(e){}
+  if(!doc||!doc.body||!win)return null;
+  const href=doc.location.href;
+  if(n.hasAttribute('srcdoc'))return href==='about:srcdoc'?{doc,key:null}:null;
+  const src=(n.getAttribute('src')||'').trim();
+  if(src===''||n.src==='about:blank')return href==='about:blank'?{doc,key:null}:null;
+  let want,got;try{want=new URL(n.src);got=new URL(href)}catch(e){return null}
+  if(got.origin!==location.origin||page(got)!==page(want)||got.search!==want.search)return null;
+  if(ancestors.includes(page(got)))return null;
+  const nav=win.performance.getEntriesByType('navigation')[0];
+  if(!nav||nav.responseStatus!==200||doc.contentType!=='text/html')return null;
+  return {doc,key:page(got)};
+ };
  const appendChildren=(from,to,depth)=>{for(const c of from.childNodes){if(scopedStyle(c))continue;const x=compose(c,depth);if(x)to.appendChild(x)}};
  const compose=(n,depth)=>{
   if(n.nodeType!==1)return n.cloneNode(false);
   if(n.localName==='template')return n.cloneNode(true);
-  if(n.localName==='slot'&&n.getRootNode() instanceof ShadowRoot){
+  const root=n.getRootNode();
+  if(n.localName==='slot'&&root.nodeType===11&&root.host){ // a ShadowRoot of any frame's realm
    const out=document.createDocumentFragment();
    const assigned=n.assignedNodes();
    if(assigned.length){for(const a of assigned){const x=compose(a,depth);if(x)out.appendChild(x)}}else appendChildren(n,out,depth);
    return out;
   }
   const copy=n.cloneNode(false);
+  absolute(copy,n);
   if(flattenShadow&&n.shadowRoot){shadowRoots++;appendChildren(n.shadowRoot,copy,depth);return copy}
   if(flattenFrames&&n.localName==='iframe'&&depth<maxFrameDepth){
-   let doc=null;try{doc=n.contentDocument}catch(e){}
-   if(doc&&doc.body){
-    frames++;
+   const frame=loadedFrame(n);
+   if(frame){
+    frames++;frameBudget--;
     const div=document.createElement('div');
-    div.setAttribute('data-rendercache-frame',n.getAttribute('src')||(n.hasAttribute('srcdoc')?'srcdoc':''));
+    div.setAttribute('data-rendercache-frame',n.getAttribute('src')||(n.hasAttribute('srcdoc')?'srcdoc':'about:blank'));
     if(n.hasAttribute('title'))div.setAttribute('title',n.getAttribute('title'));
-    appendChildren(doc.body,div,depth+1);
+    if(frame.key)ancestors.push(frame.key);
+    appendChildren(frame.doc.body,div,depth+1);
+    if(frame.key)ancestors.pop();
     return div;
    }
   }

@@ -129,3 +129,79 @@ func TestFlatteningCanBeTurnedOff(t *testing.T) {
 		t.Errorf("flattening off changed the capture: %d %d", res.ShadowRoots, res.Frames)
 	}
 }
+
+// Review of 0.4 Phase B: each case failed on 0ac28e6.
+const reviewPage = `<!doctype html><html><head><title>Frames</title></head><body>
+<div style="height:6000px"></div>
+<iframe src="/samelazy" loading="lazy" title="lazy"></iframe>
+<iframe src="/widgets/box.html"></iframe>
+<iframe src="/broken"></iframe>
+<iframe src="/fsinner"></iframe>
+<iframe src="/selfloop"></iframe>
+<p>page end</p></body></html>`
+
+func reviewOrigin(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		switch r.URL.Path {
+		case "/samelazy":
+			io.WriteString(w, `<p>Lazy frame body</p>`)
+		case "/widgets/box.html":
+			io.WriteString(w, `<a href="item.html">relative link</a><img src="pic.png" srcset="pic.png 1x, big/pic.png 2x">`)
+		case "/broken":
+			w.WriteHeader(500)
+			io.WriteString(w, `<p>Internal Server Error stack trace</p>`)
+		case "/fsinner":
+			io.WriteString(w, `<x-box><span>LIGHT DOM PROJECTED</span></x-box><script>customElements.define('x-box',class extends HTMLElement{constructor(){super();this.attachShadow({mode:'open'}).innerHTML='<div><slot>FALLBACK SHOWN</slot></div>'}})</script>`)
+		case "/selfloop":
+			io.WriteString(w, `<p>loop</p><iframe src="/selfloop"></iframe><iframe src="/selfloop?x"></iframe>`)
+		default:
+			io.WriteString(w, reviewPage)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestReview040Frames(t *testing.T) {
+	opts := browserOptions(t)
+	opts.ReadySelector = ""
+	opts.Settle = 1500 * time.Millisecond
+	opts.FlattenShadowRoots, opts.FlattenFrames = true, true
+	engine, err := NewChrome(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := reviewOrigin(t)
+	p, _ := target.Map(srv.URL, srv.URL, "/")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	res, err := engine.Render(ctx, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := res.HTML
+	// 1. A frame that never loaded keeps its iframe.
+	if !strings.Contains(h, `<iframe src="/samelazy" loading="lazy" title="lazy"></iframe>`) {
+		t.Errorf("unloaded lazy frame not kept as an iframe")
+	}
+	// 2. Slots inside a frame are resolved.
+	if !strings.Contains(h, "LIGHT DOM PROJECTED") || strings.Contains(h, "FALLBACK SHOWN") || strings.Contains(h, "<slot") {
+		t.Errorf("slot inside a frame not resolved")
+	}
+	// 3. Links and images in a frame keep pointing where they did.
+	for _, want := range []string{`href="` + srv.URL + `/widgets/item.html"`, `src="` + srv.URL + `/widgets/pic.png"`, srv.URL + `/widgets/big/pic.png 2x`} {
+		if !strings.Contains(h, want) {
+			t.Errorf("frame URL not made absolute: want %s", want)
+		}
+	}
+	// 4. An error page is not written into the snapshot.
+	if strings.Contains(h, "stack trace") || !strings.Contains(h, `<iframe src="/broken">`) {
+		t.Errorf("frame error page written into the snapshot")
+	}
+	// A page framing itself is written once, not k + k² + k³ times.
+	if n := strings.Count(h, "<p>loop</p>"); n != 1 {
+		t.Errorf("self-framing page written %d times", n)
+	}
+}
