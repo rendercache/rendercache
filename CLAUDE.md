@@ -41,7 +41,7 @@ rendercache.com keeps its Launch template unchanged; edit content and config val
 
 ## Current state
 
-v0.3.0 is the latest release (Linux amd64, macOS arm64, Windows amd64), published on 2026-11-03 by the release workflow from commit f5de9d6: verified crawlers (`verify_crawlers`, internal/verify) and config reload (SIGHUP, POST /reload). The releases/latest links resolve to it; the downloaded Linux archive matched SHA256SUMS and ran. test/results holds the recordings from CI run 41619268589 (14 of 14 promises on each platform). The ranges-live workflow fetched all 11 operator lists on 2026-11-03. Two independent review rounds (4 defects, then 2 small) are fixed with tests (review_030_test.go, TestReview030*). v0.2.0 (2026-10-18) added macOS and Windows.
+v0.4.0 is the latest release (Linux amd64, macOS arm64, Windows amd64), published on 2026-11-03 by the release workflow from commit 23bb236: open shadow roots and same-origin frames written into saved HTML (`flatten_shadow_roots`, `flatten_frames`), tested with a real Lit 3.3.3 page (internal/render/testdata/lit). v0.3.0 (f5de9d6, same day) added verified crawlers and config reload. test/results holds the recordings from the 0.4.0 release CI run. Both phases had two independent review rounds, all findings fixed with tests (TestReview030*, TestReview040*). The downloaded Linux archives of both were checked against SHA256SUMS and run. rendercache.com has the 0.3.0 and 0.4.0 posts; softdevstudio.com has both notes.
 
 ## Next: 0.3 to 0.5, item 7 of softdev-plan.md
 

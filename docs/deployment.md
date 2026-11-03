@@ -1,6 +1,6 @@
 # RenderCache deployment
 
-Release archives cover Linux amd64, macOS arm64 and Windows amd64. Install a maintained Chrome/Chromium separately for the standalone binary, or build the supplied Dockerfile. Secure file opening, directory locking and atomic snapshot replacement work on all three. Windows cannot sync a directory, so a power failure there may lose the most recent refresh (the previous snapshot stays intact). Do not treat the browser network guard as an OS sandbox. Keep your app's public/canonical URL configured correctly: the browser renders the fixed origin directly and sees its hostname.
+Release archives cover Linux amd64 and arm64, macOS arm64 and Windows amd64, and each release publishes a multi-arch image (`ghcr.io/rendercache/rendercache`, amd64 and arm64). Install a maintained Chrome/Chromium separately for the standalone binary, or build the supplied Dockerfile. Secure file opening, directory locking and atomic snapshot replacement work on all three. Windows cannot sync a directory, so a power failure there may lose the most recent refresh (the previous snapshot stays intact). Do not treat the browser network guard as an OS sandbox. Keep your app's public/canonical URL configured correctly: the browser renders the fixed origin directly and sees its hostname.
 
 ## Standalone service
 
@@ -31,10 +31,10 @@ The record quota counts serialized JSON rather than HTML length. Atomic replacem
 
 ## Docker
 
-From the tagged source checkout:
+Use the published image, or build it from the tagged source checkout:
 
 ```sh
-docker build -t rendercache:local .
+docker pull ghcr.io/rendercache/rendercache:latest   # or: docker build -t ghcr.io/rendercache/rendercache:latest .
 export RENDERCACHE_ADMIN_TOKEN='replace-with-a-long-secret'
 # Edit deploy/container.json: origin must be reachable from the container,
 # public_url is your site's public root, and ready_selector must fit your app.
@@ -67,6 +67,6 @@ References used for the examples: nginx map/proxy modules (`https://nginx.org/en
 
 ## Release verification
 
-`bash scripts/build-release.sh dist [GOOS GOARCH]` writes one deterministic archive (`rendercache_<os>_<arch>.tar.gz`, or `.zip` for Windows) and its SHA256SUMS line under `dist`. CI builds the Linux, macOS and Windows archives twice from identical source with Go 1.27.2 and compares them, and exercises the extracted Linux binary with a real browser, Docker/Chromium and nginx. Go dependencies are checksum-pinned.
+`bash scripts/build-release.sh dist [GOOS GOARCH]` writes one deterministic archive (`rendercache_<os>_<arch>.tar.gz`, or `.zip` for Windows) and its SHA256SUMS line under `dist`. CI builds the Linux (amd64, arm64), macOS and Windows archives twice from identical source with Go 1.27.2 and compares them, and exercises the extracted Linux binary with a real browser, Docker/Chromium and nginx. Go dependencies are checksum-pinned.
 
 Releases are published by `.github/workflows/release.yml`. After CI passes on a push to main whose VERSION has no tag yet, it builds all three archives once on Linux (twice, comparing checksums), runs each extracted executable against real Chrome on its own system, then tags the commit and publishes exactly those files with SHA256SUMS. Archive names carry no version, so `releases/latest/download/<archive>` links always fetch the newest stable release; prereleases are only on the releases page.

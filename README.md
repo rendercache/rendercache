@@ -10,7 +10,7 @@ curl -I -A GPTBot http://127.0.0.1:8080/    # X-RenderCache: MISS, then HIT once
 
 The admin page on `127.0.0.1:9090` shows what a crawler gets next to the raw HTML, which words only appear after rendering, and a log of every crawler delivery. With `--verify-crawlers`, a request that only claims to be Googlebot or GPTBot gets the live app: the crawler's address has to be in the ranges its operator publishes, or pass a reverse DNS check.
 
-**Version 0.4.0, for Linux, macOS and Windows.** RenderCache warms pages from sitemaps, stores rendered responses and serves them to crawlers. Humans receive the ordinary app. Fresh snapshots return `HIT`; expired snapshots return `STALE` while a deduplicated refresh runs in the background. A cold `MISS` proxies the origin immediately and requests background rendering. The protected admin page compares raw HTML with a saved snapshot, highlights missing text and shows rotating delivery receipts. Snapshot quotas, explicit prune, process locking, constrained HTTP work and Docker/deployment/release packaging are included. This is an early release for evaluation, not a production-readiness claim.
+**Version 0.5.0, for Linux (amd64 and arm64), macOS and Windows, and as a container image.** RenderCache warms pages from sitemaps, stores rendered responses and serves them to crawlers. Humans receive the ordinary app. Fresh snapshots return `HIT`; expired snapshots return `STALE` while a deduplicated refresh runs in the background. A cold `MISS` proxies the origin immediately and requests background rendering. The protected admin page compares raw HTML with a saved snapshot, highlights missing text and shows rotating delivery receipts. Snapshot quotas, explicit prune, process locking, constrained HTTP work and Docker/deployment/release packaging are included. This is an early release for evaluation, not a production-readiness claim.
 
 ## Build and run
 
@@ -228,9 +228,10 @@ Startup fails if the log cannot be opened. Runtime logging failures do not stall
 
 ## Downloads and platforms
 
-Binaries for Linux (amd64), macOS (Apple silicon) and Windows (amd64) are on the [releases page](https://github.com/rendercache/rendercache/releases). Archive names don't change between releases, so these links always fetch the newest stable release (GitHub skips alpha and other prereleases here; find those on the releases page):
+Binaries for Linux (amd64 and arm64), macOS (Apple silicon) and Windows (amd64) are on the [releases page](https://github.com/rendercache/rendercache/releases). Archive names don't change between releases, so these links always fetch the newest stable release (GitHub skips alpha and other prereleases here; find those on the releases page):
 
 - https://github.com/rendercache/rendercache/releases/latest/download/rendercache_linux_amd64.tar.gz
+- https://github.com/rendercache/rendercache/releases/latest/download/rendercache_linux_arm64.tar.gz
 - https://github.com/rendercache/rendercache/releases/latest/download/rendercache_darwin_arm64.tar.gz
 - https://github.com/rendercache/rendercache/releases/latest/download/rendercache_windows_amd64.zip
 - https://github.com/rendercache/rendercache/releases/latest/download/SHA256SUMS
@@ -239,9 +240,17 @@ Check the archive with `sha256sum -c SHA256SUMS` (or `shasum -a 256 -c` on macOS
 
 On every platform, files in the data directory are opened without following links, one process owns the directory through a lock, and a snapshot is replaced only by a complete copy. Linux and macOS sync the directory after each change. Windows can't sync a directory, so it relies on NTFS journaling: after a crash the old or the new snapshot is there, never a partial one, but the latest refresh may be lost on power failure.
 
-Releases are automatic. When CI passes on main for a version that has no tag yet, the release workflow builds each platform's archive, runs it against real Chrome, and only then tags the commit and publishes the release with SHA256SUMS.
+Releases are automatic. When CI passes on main for a version that has no tag yet, the release workflow builds each platform's archive, runs it against real Chrome (Debian's Chromium for Linux arm64, which Google doesn't build Chrome for), builds the container image natively on amd64 and arm64 and runs it, and only then tags the commit and publishes the release with SHA256SUMS and the image.
 
-The Docker image runs as UID 10001 with Chromium and tini. Its sandbox is enabled by default and requires host support. The isolated CI container smoke explicitly opts out of Chrome's sandbox under a private network and filesystem/resource restrictions; it does not verify sandbox operation on your host. Docker, nginx, Cloudflare routing and quota maintenance instructions are in [docs/deployment.md](docs/deployment.md). No domain, Worker or registry image is deployed automatically.
+A container image for Linux amd64 and arm64, with Chromium included, is published with each release from 0.5.0 on:
+
+```sh
+docker pull ghcr.io/rendercache/rendercache:latest     # or :0.5.0
+```
+
+Docker picks the architecture of the host. The deployment guide's compose example uses it the same way as a local build.
+
+The Docker image runs as UID 10001 with Chromium and tini. Its sandbox is enabled by default and requires host support. The isolated CI container smoke explicitly opts out of Chrome's sandbox under a private network and filesystem/resource restrictions; it does not verify sandbox operation on your host. Docker, nginx, Cloudflare routing and quota maintenance instructions are in [docs/deployment.md](docs/deployment.md). No domain or Worker is deployed automatically; the registry image is published, never run anywhere by this repository.
 
 ## How it's tested
 

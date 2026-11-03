@@ -1,5 +1,8 @@
 services:
   rendercache:
+    # The published multi-arch image; `docker compose build` builds the same
+    # image from this checkout instead.
+    image: ghcr.io/rendercache/rendercache:latest
     build:
       context: ..
     ports:

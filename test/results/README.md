@@ -18,25 +18,26 @@ Written by `scripts/record-tests.py` from full `go test -race` runs. Do not edit
 | Only a trusted edge can set forwarding headers for the origin | passed | passed | passed |
 | With verification on, a request that only claims to be a crawler gets the live site | passed | passed | passed |
 | A reload applies new bot rules without a restart, and a broken file changes nothing | passed | passed | passed |
+| Text inside web components (Lit) and same-origin frames is in the saved HTML | passed | passed | passed |
 
 | Run | darwin arm64 | linux amd64 | windows amd64 |
 |---|---|---|---|
-| Recorded (UTC) | 2026-11-03T10:27:39Z | 2026-11-03T10:27:30Z | 2026-11-03T10:27:49Z |
-| Commit | f5de9d6bee0c | f5de9d6bee0c | f5de9d6bee0c |
+| Recorded (UTC) | 2026-11-03T10:59:15Z | 2026-11-03T10:53:42Z | 2026-11-03T10:54:12Z |
+| Commit | 23bb236f18b6 | 23bb236f18b6 | 23bb236f18b6 |
 | Go | go1.27.2 | go1.27.2 | go1.27.2 |
 | Real Chrome | yes | yes | yes |
-| CI run | https://github.com/rendercache/rendercache/actions/runs/41619268589 | https://github.com/rendercache/rendercache/actions/runs/41619268589 | https://github.com/rendercache/rendercache/actions/runs/41619268589 |
-| Tests passed | 109 | 109 | 108 |
+| CI run | https://github.com/rendercache/rendercache/actions/runs/41622865798 | https://github.com/rendercache/rendercache/actions/runs/41622865798 | https://github.com/rendercache/rendercache/actions/runs/41622865798 |
+| Tests passed | 113 | 113 | 112 |
 | Tests failed | 0 | 0 | 0 |
 | Tests skipped | 2 | 2 | 2 |
-| chrome render ms | 6166 | 7863 | 4576 |
+| chrome render ms | 4457 | 794 | 2558 |
 | crawler requests while chrome stuck | 100 | 100 | 100 |
 | kill corrupt snapshots | 0 | 0 | 0 |
-| kill distinct versions seen | 16 | 18 | 8 |
+| kill distinct versions seen | 17 | 13 | 9 |
 | kill rounds | 60 | 60 | 60 |
-| kills during a write | 20 | 3 | 43 |
-| off origin requests blocked | 12 | 11 | 10 |
+| kills during a write | 13 | 3 | 43 |
+| off origin requests blocked | 11 | 11 | 11 |
 | off origin requests reaching target | 0 | 0 | 0 |
 | origin down crawler requests | 50 | 50 | 50 |
 | origin down served from saved copy | 50 | 50 | 50 |
-| slowest crawler response ms while chrome stuck | 3 | 11 | 12 |
+| slowest crawler response ms while chrome stuck | 16 | 1 | 2 |

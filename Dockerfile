@@ -9,6 +9,9 @@ ARG COMMIT=unknown
 RUN CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags="-s -w -buildid= -X main.version=${VERSION} -X main.commit=${COMMIT}" -o /out/rendercache ./cmd/rendercache
 
 FROM debian:bookworm-slim
+LABEL org.opencontainers.image.source="https://github.com/rendercache/rendercache" \
+      org.opencontainers.image.description="Self-hosted pre-render cache: renders JavaScript pages in Chromium and serves the HTML to crawlers" \
+      org.opencontainers.image.licenses="Apache-2.0"
 RUN apt-get update && apt-get install -y --no-install-recommends chromium chromium-sandbox ca-certificates fonts-liberation tini \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 10001 rendercache \

@@ -1,6 +1,6 @@
 {
-  "recorded_at": "2026-11-03T10:27:30Z",
-  "commit": "f5de9d6bee0ca4952419863246d828c155fada5e",
+  "recorded_at": "2026-11-03T10:53:42Z",
+  "commit": "23bb236f18b607eaaa44c3aef7b3dde1c19eb21a",
   "go": "go1.27.2",
   "os": "linux",
   "arch": "amd64",
@@ -9,7 +9,7 @@
   "race_detector": true,
   "packages": 13,
   "tests": {
-    "passed": 109,
+    "passed": 113,
     "failed": 0,
     "skipped": 2
   },
@@ -83,20 +83,25 @@
       "test": "TestServeReloadsConfigOnAdminPost",
       "promise": "A reload applies new bot rules without a restart, and a broken file changes nothing",
       "status": "pass"
+    },
+    {
+      "test": "TestLitComponentTextIsCaptured",
+      "promise": "Text inside web components (Lit) and same-origin frames is in the saved HTML",
+      "status": "pass"
     }
   ],
   "results": {
-    "chrome_render_ms": 7863,
+    "chrome_render_ms": 794,
     "crawler_requests_while_chrome_stuck": 100,
     "kill_corrupt_snapshots": 0,
-    "kill_distinct_versions_seen": 18,
+    "kill_distinct_versions_seen": 13,
     "kill_rounds": 60,
     "kills_during_a_write": 3,
     "off_origin_requests_blocked": 11,
     "off_origin_requests_reaching_target": 0,
     "origin_down_crawler_requests": 50,
     "origin_down_served_from_saved_copy": 50,
-    "slowest_crawler_response_ms_while_chrome_stuck": 11
+    "slowest_crawler_response_ms_while_chrome_stuck": 1
   },
-  "ci_run": "https://github.com/rendercache/rendercache/actions/runs/41619268589"
+  "ci_run": "https://github.com/rendercache/rendercache/actions/runs/41622865798"
 }

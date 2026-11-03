@@ -1,8 +1,11 @@
 # Automated releases. When CI passes on a push to main and VERSION names a
-# version that has no tag yet, build the Linux, macOS and Windows archives once
-# on Linux (the same deterministic build CI compares), smoke-test each archive
-# on its own operating system with real Chrome, then tag the commit and publish
-# exactly those files. Nothing is published unless every step passes.
+# version that has no tag yet, build the Linux (amd64, arm64), macOS and
+# Windows archives once on Linux (the same deterministic build CI compares),
+# smoke-test each archive on its own system with real Chrome, build and
+# smoke-test the container image natively on amd64 and arm64, then tag the
+# commit, publish exactly those files and the multi-arch image on GHCR.
+# Nothing is published unless every step passes; the per-architecture image
+# tags (VERSION-amd64, VERSION-arm64) are pushed just before.
 name: Release
 on:
   workflow_run:
@@ -48,14 +51,14 @@ jobs:
           go-version: '1.27.2'
       - name: Build twice and compare deterministic archives
         run: |
-          for target in "linux amd64" "darwin arm64" "windows amd64"; do
+          for target in "linux amd64" "linux arm64" "darwin arm64" "windows amd64"; do
             bash scripts/build-release.sh dist $target
             bash scripts/build-release.sh dist-repeat $target
           done
           cmp dist/SHA256SUMS dist-repeat/SHA256SUMS
           cd dist
           sha256sum -c SHA256SUMS
-          test "$(wc -l < SHA256SUMS)" -eq 3
+          test "$(wc -l < SHA256SUMS)" -eq 4
       - uses: actions/upload-artifact@v4
         with:
           name: release-archives
@@ -66,7 +69,7 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -82,6 +85,15 @@ jobs:
       - name: Smoke-test the extracted executable with real Chrome
         run: |
           mkdir -p extracted
+          if [ "$RUNNER_OS" = Linux ] && [ "$RUNNER_ARCH" = ARM64 ]; then
+            # Google Chrome has no Linux arm64 build; Debian's Chromium does.
+            tar -xzf dist/rendercache_linux_arm64.tar.gz -C extracted
+            extracted/rendercache version | grep -F "rendercache ${{ needs.check.outputs.version }} " | grep -F "linux/arm64"
+            docker run --rm -v "$PWD:/w" -w /w -e RENDERCACHE_TEST_NO_SANDBOX=1 debian:bookworm-slim sh -c \
+              'apt-get update -qq && apt-get install -y -qq --no-install-recommends chromium python3 ca-certificates fonts-liberation >/dev/null && python3 scripts/smoke.py --binary extracted/rendercache --chrome /usr/bin/chromium' > smoke.txt 2>&1 \
+              || { sed 's/^/::error title=arm64 smoke::/' smoke.txt | tail -20; exit 1; }
+            exit 0
+          fi
           case "$RUNNER_OS" in
             Linux)
               tar -xzf dist/rendercache_linux_amd64.tar.gz -C extracted
@@ -99,11 +111,43 @@ jobs:
           esac
           "$binary" version | grep -F "rendercache ${{ needs.check.outputs.version }} "
           "$py" scripts/smoke.py --binary "$binary" --chrome "$chrome"
-  publish:
+  image:
     needs: [check, build, smoke]
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - os: ubuntu-latest
+            arch: amd64
+          - os: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - name: Build natively and smoke-test with real Chromium
+        run: |
+          docker build --build-arg VERSION="${{ needs.check.outputs.version }}" --build-arg COMMIT="${{ github.event.workflow_run.head_sha }}" -t rendercache:test .
+          docker run --rm rendercache:test version | grep -F "linux/${{ matrix.arch }}"
+          python3 scripts/container-smoke.py
+      - name: Push the ${{ matrix.arch }} image
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE: ghcr.io/${{ github.repository }}:${{ needs.check.outputs.version }}-${{ matrix.arch }}
+        run: |
+          echo "$GH_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker tag rendercache:test "$IMAGE"
+          docker push "$IMAGE"
+  publish:
+    needs: [check, build, smoke, image]
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      packages: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -117,8 +161,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.check.outputs.version }}
           SHA: ${{ github.event.workflow_run.head_sha }}
+          REPO: ghcr.io/${{ github.repository }}
         run: |
-          (cd dist && sha256sum -c SHA256SUMS && test "$(wc -l < SHA256SUMS)" -eq 3)
+          (cd dist && sha256sum -c SHA256SUMS && test "$(wc -l < SHA256SUMS)" -eq 4)
           # Publish only the current tip of main, and only once.
           main=$(git ls-remote origin refs/heads/main | cut -f1)
           if [ "$main" != "$SHA" ]; then
@@ -133,3 +178,11 @@ jobs:
           case "$VERSION" in *-*) prerelease=(--prerelease) ;; esac
           gh release create "v$VERSION" dist/* --target "$SHA" --title "RenderCache v$VERSION" \
             --notes-file docs/release-notes.md "${prerelease[@]}"
+          # The image is published in the same step, after the release, so a
+          # run that stopped above never moves the image tags.
+          echo "$GH_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          tags=(-t "$REPO:$VERSION")
+          case "$VERSION" in *-*) ;; *) tags+=(-t "$REPO:latest") ;; esac
+          docker buildx imagetools create "${tags[@]}" "$REPO:$VERSION-amd64" "$REPO:$VERSION-arm64"
+          docker buildx imagetools inspect "$REPO:$VERSION" > manifest.txt
+          grep -q 'linux/amd64' manifest.txt && grep -q 'linux/arm64' manifest.txt
