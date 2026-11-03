@@ -1,17 +1,17 @@
 {
-  "recorded_at": "2026-10-18T04:36:04Z",
-  "commit": "6bc0ddbf1e31da0e23ab3f44b209f719c032c939",
+  "recorded_at": "2026-11-03T10:27:30Z",
+  "commit": "f5de9d6bee0ca4952419863246d828c155fada5e",
   "go": "go1.27.2",
   "os": "linux",
   "arch": "amd64",
-  "os_version": "Linux-6.17.0-1022-azure-x86_64-with-glibc2.39",
+  "os_version": "Linux-7.0.0-1017-azure-x86_64-with-glibc2.39",
   "real_chrome": true,
   "race_detector": true,
-  "packages": 12,
+  "packages": 13,
   "tests": {
-    "passed": 85,
+    "passed": 109,
     "failed": 0,
-    "skipped": 1
+    "skipped": 2
   },
   "promises": [
     {
@@ -73,20 +73,30 @@
       "test": "TestTrustedEdgeForwardingHeaders",
       "promise": "Only a trusted edge can set forwarding headers for the origin",
       "status": "pass"
+    },
+    {
+      "test": "TestSpoofedCrawlerGetsLiveSite",
+      "promise": "With verification on, a request that only claims to be a crawler gets the live site",
+      "status": "pass"
+    },
+    {
+      "test": "TestServeReloadsConfigOnAdminPost",
+      "promise": "A reload applies new bot rules without a restart, and a broken file changes nothing",
+      "status": "pass"
     }
   ],
   "results": {
-    "chrome_render_ms": 7881,
+    "chrome_render_ms": 7863,
     "crawler_requests_while_chrome_stuck": 100,
     "kill_corrupt_snapshots": 0,
-    "kill_distinct_versions_seen": 19,
+    "kill_distinct_versions_seen": 18,
     "kill_rounds": 60,
-    "kills_during_a_write": 4,
-    "off_origin_requests_blocked": 10,
+    "kills_during_a_write": 3,
+    "off_origin_requests_blocked": 11,
     "off_origin_requests_reaching_target": 0,
     "origin_down_crawler_requests": 50,
     "origin_down_served_from_saved_copy": 50,
     "slowest_crawler_response_ms_while_chrome_stuck": 11
   },
-  "ci_run": "https://github.com/rendercache/rendercache/actions/runs/39097621925"
+  "ci_run": "https://github.com/rendercache/rendercache/actions/runs/41619268589"
 }

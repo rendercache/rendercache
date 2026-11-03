@@ -41,7 +41,7 @@ rendercache.com keeps its Launch template unchanged; edit content and config val
 
 ## Current state
 
-v0.2.0 is the latest release (Linux amd64, macOS arm64, Windows amd64), published on 2026-10-18 by the release workflow (run 39098005269) from commit d54c1a5. The releases/latest links resolve to it. test/results holds the recordings from CI run 39097621925. rendercache.com has the reference page, the 0.2.0 post, the how-it-is-tested post and the name post; softdevstudio.com has the 0.2.0 note.
+v0.3.0 is the latest release (Linux amd64, macOS arm64, Windows amd64), published on 2026-11-03 by the release workflow from commit f5de9d6: verified crawlers (`verify_crawlers`, internal/verify) and config reload (SIGHUP, POST /reload). The releases/latest links resolve to it; the downloaded Linux archive matched SHA256SUMS and ran. test/results holds the recordings from CI run 41619268589 (14 of 14 promises on each platform). The ranges-live workflow fetched all 11 operator lists on 2026-11-03. Two independent review rounds (4 defects, then 2 small) are fixed with tests (review_030_test.go, TestReview030*). v0.2.0 (2026-10-18) added macOS and Windows.
 
 ## Next: 0.3 to 0.5, item 7 of softdev-plan.md
 
@@ -65,7 +65,7 @@ Upkeep (with Phase A): one README intro, "Run the current checkpoint" renamed, n
 
 Steps:
 1. [x] Phase A code and tests; README, deployment guide
-2. [ ] independent review, fixes, recording; ranges-live run
+2. [x] independent review (two rounds), fixes, recording; ranges-live run
 3. [ ] release 0.3.0; site; softdevstudio note; softdev-plan.md
 4. [ ] Phase B, review, release 0.4.0
 5. [ ] Phase C, release 0.5.0
