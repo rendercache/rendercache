@@ -29,6 +29,8 @@ type Result struct {
 	Duration        time.Duration     `json:"duration"`
 	Redirects       []Redirect        `json:"redirects,omitempty"`
 	BlockedRequests uint64            `json:"blocked_requests"`
+	ShadowRoots     int               `json:"shadow_roots,omitempty"` // open shadow roots written into HTML
+	Frames          int               `json:"frames,omitempty"`       // same-origin iframes written into HTML
 }
 type Engine interface {
 	Render(context.Context, target.Page) (Result, error)

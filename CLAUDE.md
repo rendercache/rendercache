@@ -66,6 +66,6 @@ Upkeep (with Phase A): one README intro, "Run the current checkpoint" renamed, n
 Steps:
 1. [x] Phase A code and tests; README, deployment guide
 2. [x] independent review (two rounds), fixes, recording; ranges-live run
-3. [ ] release 0.3.0; site; softdevstudio note; softdev-plan.md
+3. [x] release 0.3.0 (tag on f5de9d6); site 5b52fc4; softdevstudio note 41baa49; softdev-plan.md
 4. [ ] Phase B, review, release 0.4.0
 5. [ ] Phase C, release 0.5.0

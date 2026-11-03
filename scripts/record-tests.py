@@ -37,6 +37,7 @@ PROMISES = [
     ("TestTrustedEdgeForwardingHeaders", "Only a trusted edge can set forwarding headers for the origin"),
     ("TestSpoofedCrawlerGetsLiveSite", "With verification on, a request that only claims to be a crawler gets the live site"),
     ("TestServeReloadsConfigOnAdminPost", "A reload applies new bot rules without a restart, and a broken file changes nothing"),
+    ("TestLitComponentTextIsCaptured", "Text inside web components (Lit) and same-origin frames is in the saved HTML"),
 ]
 
 

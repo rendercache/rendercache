@@ -67,6 +67,10 @@ type Config struct {
 	// UnverifiableCrawlers decides, with verify_crawlers on, what crawlers
 	// whose operator publishes no way to check them get: "snapshot" or "live".
 	UnverifiableCrawlers string `json:"unverifiable_crawlers"`
+	// FlattenShadowRoots and FlattenFrames write open shadow roots and
+	// same-origin iframes into the captured HTML.
+	FlattenShadowRoots bool `json:"flatten_shadow_roots"`
+	FlattenFrames      bool `json:"flatten_frames"`
 }
 
 func Default() Config {
@@ -89,6 +93,8 @@ func Default() Config {
 		TrustedProxies:    []string{"127.0.0.0/8", "::1/128"},
 
 		UnverifiableCrawlers: "snapshot",
+		FlattenShadowRoots:   true,
+		FlattenFrames:        true,
 	}
 }
 

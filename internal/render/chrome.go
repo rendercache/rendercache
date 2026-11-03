@@ -31,6 +31,12 @@ type Options struct {
 	MaxHTMLBytes   int64
 	AllowedOrigins []string
 	Concurrency    int
+	// FlattenShadowRoots writes the content of open shadow roots into the
+	// captured HTML, with slotted content in its place, so web components
+	// (Lit, Stencil and others) aren't empty for crawlers that don't run
+	// JavaScript. FlattenFrames does the same for same-origin iframes.
+	FlattenShadowRoots bool
+	FlattenFrames      bool
 }
 type Chrome struct {
 	opts  Options
@@ -310,19 +316,52 @@ func (c *Chrome) Render(parent context.Context, p target.Page) (Result, error) {
 		return result, fmt.Errorf("readiness: %w", err)
 	}
 	expression := fmt.Sprintf(`(() => {
- const root=document.documentElement.cloneNode(true);
+ const flattenShadow=%t, flattenFrames=%t, maxFrameDepth=3;
+ let shadowRoots=0, frames=0;
+ // Styles of shadow roots and frames are scoped there; written into the page
+ // they would restyle it, so they are left out.
+ const scopedStyle=n=>n.nodeType===1&&n.getRootNode()!==document&&(n.localName==='style'||(n.localName==='link'&&/(^|\s)stylesheet(\s|$)/i.test(n.getAttribute('rel')||'')));
+ const appendChildren=(from,to,depth)=>{for(const c of from.childNodes){if(scopedStyle(c))continue;const x=compose(c,depth);if(x)to.appendChild(x)}};
+ const compose=(n,depth)=>{
+  if(n.nodeType!==1)return n.cloneNode(false);
+  if(n.localName==='template')return n.cloneNode(true);
+  if(n.localName==='slot'&&n.getRootNode() instanceof ShadowRoot){
+   const out=document.createDocumentFragment();
+   const assigned=n.assignedNodes();
+   if(assigned.length){for(const a of assigned){const x=compose(a,depth);if(x)out.appendChild(x)}}else appendChildren(n,out,depth);
+   return out;
+  }
+  const copy=n.cloneNode(false);
+  if(flattenShadow&&n.shadowRoot){shadowRoots++;appendChildren(n.shadowRoot,copy,depth);return copy}
+  if(flattenFrames&&n.localName==='iframe'&&depth<maxFrameDepth){
+   let doc=null;try{doc=n.contentDocument}catch(e){}
+   if(doc&&doc.body){
+    frames++;
+    const div=document.createElement('div');
+    div.setAttribute('data-rendercache-frame',n.getAttribute('src')||(n.hasAttribute('srcdoc')?'srcdoc':''));
+    if(n.hasAttribute('title'))div.setAttribute('title',n.getAttribute('title'));
+    appendChildren(doc.body,div,depth+1);
+    return div;
+   }
+  }
+  appendChildren(n,copy,depth);
+  return copy;
+ };
+ const root=(flattenShadow||flattenFrames)?compose(document.documentElement,0):document.documentElement.cloneNode(true);
  root.querySelectorAll('script').forEach(s=>{if((s.getAttribute('type')||'').trim().toLowerCase()!=='application/ld+json')s.remove()});
  [root,...root.querySelectorAll('*')].forEach(e=>{for(const a of Array.from(e.attributes)){if(a.name.toLowerCase().startsWith('on'))e.removeAttribute(a.name)}});
  const html=(document.doctype?'<!DOCTYPE html>\n':'')+root.outerHTML;
  if(new TextEncoder().encode(html).length>%d)throw new Error('snapshot exceeds HTML size limit');
- return {html,final_url:location.href,title:document.title,canonical:document.querySelector('link[rel="canonical"]')?.href||'',robots:document.querySelector('meta[name="robots"]')?.content||''};
- })()`, c.opts.MaxHTMLBytes)
+ return {html,final_url:location.href,title:document.title,canonical:document.querySelector('link[rel="canonical"]')?.href||'',robots:document.querySelector('meta[name="robots"]')?.content||'',shadow_roots:shadowRoots,frames};
+ })()`, c.opts.FlattenShadowRoots, c.opts.FlattenFrames, c.opts.MaxHTMLBytes)
 	capture, err := chromedp.Run(tab, chromedp.Evaluate[struct {
 		HTML      string `json:"html"`
 		FinalURL  string `json:"final_url"`
 		Title     string `json:"title"`
 		Canonical string `json:"canonical"`
 		Robots    string `json:"robots"`
+		Shadow    int    `json:"shadow_roots"`
+		Frames    int    `json:"frames"`
 	}](expression))
 	if err != nil {
 		return result, fmt.Errorf("capture: %w", err)
@@ -338,6 +377,8 @@ func (c *Chrome) Render(parent context.Context, p target.Page) (Result, error) {
 	result.Title = capture.Title
 	result.Canonical = capture.Canonical
 	result.Robots = capture.Robots
+	result.ShadowRoots = capture.Shadow
+	result.Frames = capture.Frames
 	stopEvents()
 	wg.Wait()
 	mu.Lock()

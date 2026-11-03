@@ -215,7 +215,7 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) error {
 		if err != nil {
 			return err
 		}
-		return json.NewEncoder(out).Encode(map[string]any{"key": record.Key, "url": record.Page.URL, "status": result.Status, "content_hash": record.ContentHash, "bytes": len(result.HTML), "title": result.Title, "renderer": result.Renderer, "duration_ms": result.Duration.Milliseconds(), "blocked_requests": result.BlockedRequests})
+		return json.NewEncoder(out).Encode(map[string]any{"key": record.Key, "url": record.Page.URL, "status": result.Status, "content_hash": record.ContentHash, "bytes": len(result.HTML), "title": result.Title, "renderer": result.Renderer, "duration_ms": result.Duration.Milliseconds(), "blocked_requests": result.BlockedRequests, "shadow_roots": result.ShadowRoots, "frames": result.Frames})
 	}
 	if *pageURL != "" {
 		return errors.New("--url is only used by render/inspect")
@@ -394,7 +394,7 @@ wait:
 func newRenderer(c config.Config) (*render.Chrome, error) {
 	timeout, _ := time.ParseDuration(c.RenderTimeout)
 	settle, _ := time.ParseDuration(c.RenderSettle)
-	return render.NewChrome(render.Options{ChromePath: c.ChromePath, NoSandbox: c.ChromeNoSandbox, Timeout: timeout, Settle: settle, ReadySelector: c.ReadySelector, MaxHTMLBytes: c.MaxHTMLBytes, AllowedOrigins: c.RenderAllowOrigins, Concurrency: c.RenderConcurrency})
+	return render.NewChrome(render.Options{ChromePath: c.ChromePath, NoSandbox: c.ChromeNoSandbox, Timeout: timeout, Settle: settle, ReadySelector: c.ReadySelector, MaxHTMLBytes: c.MaxHTMLBytes, AllowedOrigins: c.RenderAllowOrigins, Concurrency: c.RenderConcurrency, FlattenShadowRoots: c.FlattenShadowRoots, FlattenFrames: c.FlattenFrames})
 }
 
 // Lifecycle messages (start, stop, and one per reload) are written with a
