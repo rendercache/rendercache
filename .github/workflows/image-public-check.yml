@@ -12,7 +12,12 @@ jobs:
       - name: Anonymous manifest fetch
         run: |
           version=$(curl -fsSL https://raw.githubusercontent.com/rendercache/rendercache/main/VERSION | tr -d '\r\n')
-          token=$(curl -fsS "https://ghcr.io/token?scope=repository:rendercache/rendercache:pull" | python3 -c 'import json,sys;print(json.load(sys.stdin).get("token",""))')
+          tcode=$(curl -s -o token.json -w '%{http_code}' "https://ghcr.io/token?scope=repository:rendercache/rendercache:pull")
+          if [ "$tcode" != 200 ]; then
+            echo "::error title=image not public::ghcr.io refused an anonymous pull token (HTTP $tcode): the package is private or missing"
+            exit 1
+          fi
+          token=$(python3 -c 'import json;print(json.load(open("token.json")).get("token",""))')
           code=$(curl -s -o manifest.json -w '%{http_code}' -H "Authorization: Bearer $token" \
             -H 'Accept: application/vnd.oci.image.index.v1+json' "https://ghcr.io/v2/rendercache/rendercache/manifests/$version")
           if [ "$code" != 200 ]; then
