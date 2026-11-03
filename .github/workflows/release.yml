@@ -83,13 +83,15 @@ jobs:
           name: release-archives
           path: dist
       - name: Smoke-test the extracted executable with real Chrome
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
         run: |
           mkdir -p extracted
           if [ "$RUNNER_OS" = Linux ] && [ "$RUNNER_ARCH" = ARM64 ]; then
             # Google Chrome has no Linux arm64 build; Debian's Chromium does.
             tar -xzf dist/rendercache_linux_arm64.tar.gz -C extracted
-            extracted/rendercache version | grep -F "rendercache ${{ needs.check.outputs.version }} " | grep -F "linux/arm64"
-            docker run --rm -v "$PWD:/w" -w /w -e RENDERCACHE_TEST_NO_SANDBOX=1 debian:bookworm-slim sh -c \
+            extracted/rendercache version | grep -F "rendercache $VERSION " | grep -F "linux/arm64"
+            docker run --rm -v "$PWD:/w" -w /w -e RENDERCACHE_TEST_NO_SANDBOX=1 debian:trixie-slim sh -c \
               'apt-get update -qq && apt-get install -y -qq --no-install-recommends chromium python3 ca-certificates fonts-liberation >/dev/null && python3 scripts/smoke.py --binary extracted/rendercache --chrome /usr/bin/chromium' > smoke.txt 2>&1 \
               || { sed 's/^/::error title=arm64 smoke::/' smoke.txt | tail -20; exit 1; }
             exit 0
@@ -109,7 +111,7 @@ jobs:
               binary=extracted/rendercache.exe; py=python
               chrome="C:/Program Files/Google/Chrome/Application/chrome.exe" ;;
           esac
-          "$binary" version | grep -F "rendercache ${{ needs.check.outputs.version }} "
+          "$binary" version | grep -F "rendercache $VERSION "
           "$py" scripts/smoke.py --binary "$binary" --chrome "$chrome"
   image:
     needs: [check, build, smoke]
@@ -130,16 +132,21 @@ jobs:
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
       - name: Build natively and smoke-test with real Chromium
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+          ARCH: ${{ matrix.arch }}
         run: |
-          docker build --build-arg VERSION="${{ needs.check.outputs.version }}" --build-arg COMMIT="${{ github.event.workflow_run.head_sha }}" -t rendercache:test .
-          docker run --rm rendercache:test version | grep -F "linux/${{ matrix.arch }}"
+          docker build --build-arg VERSION="$VERSION" --build-arg COMMIT="$SHA" -t rendercache:test .
+          docker run --rm rendercache:test version | grep -F "rendercache $VERSION " | grep -F "linux/$ARCH"
           python3 scripts/container-smoke.py
       - name: Push the ${{ matrix.arch }} image
         env:
           GH_TOKEN: ${{ github.token }}
           IMAGE: ghcr.io/${{ github.repository }}:${{ needs.check.outputs.version }}-${{ matrix.arch }}
+          ACTOR: ${{ github.actor }}
         run: |
-          echo "$GH_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
           docker tag rendercache:test "$IMAGE"
           docker push "$IMAGE"
   publish:
@@ -178,11 +185,34 @@ jobs:
           case "$VERSION" in *-*) prerelease=(--prerelease) ;; esac
           gh release create "v$VERSION" dist/* --target "$SHA" --title "RenderCache v$VERSION" \
             --notes-file docs/release-notes.md "${prerelease[@]}"
-          # The image is published in the same step, after the release, so a
-          # run that stopped above never moves the image tags.
-          echo "$GH_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      # Its own step, and safe to run again: it publishes the image tags only
+      # when v$VERSION is a release of exactly this commit, so a re-run after
+      # an image failure finishes the job, and a run that stopped above (main
+      # moved on, tag elsewhere) never moves them. :latest only follows the
+      # newest stable release.
+      - name: Publish the multi-arch image
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.check.outputs.version }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+          REPO: ghcr.io/${{ github.repository }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          # The commit the tag points at (an annotated tag's peeled entry, if any).
+          tagged=$(git ls-remote origin "refs/tags/v$VERSION^{}" | cut -f1)
+          [ -n "$tagged" ] || tagged=$(git ls-remote origin "refs/tags/v$VERSION" | cut -f1)
+          if [ "$tagged" != "$SHA" ]; then
+            echo "v$VERSION is not a release of $SHA; image tags left as they are."
+            exit 0
+          fi
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
           tags=(-t "$REPO:$VERSION")
-          case "$VERSION" in *-*) ;; *) tags+=(-t "$REPO:latest") ;; esac
-          docker buildx imagetools create "${tags[@]}" "$REPO:$VERSION-amd64" "$REPO:$VERSION-arm64"
+          latest=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName -q .tagName)
+          case "$VERSION" in *-*) ;; *) [ "$latest" = "v$VERSION" ] && tags+=(-t "$REPO:latest") ;; esac
+          docker buildx imagetools create "${tags[@]}" \
+            --annotation "index:org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
+            --annotation "index:org.opencontainers.image.description=RenderCache $VERSION with Chromium: renders JavaScript pages and serves the HTML to crawlers" \
+            --annotation "index:org.opencontainers.image.licenses=Apache-2.0" \
+            "$REPO:$VERSION-amd64" "$REPO:$VERSION-arm64"
           docker buildx imagetools inspect "$REPO:$VERSION" > manifest.txt
           grep -q 'linux/amd64' manifest.txt && grep -q 'linux/arm64' manifest.txt

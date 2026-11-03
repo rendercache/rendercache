@@ -248,7 +248,7 @@ A container image for Linux amd64 and arm64, with Chromium included, is publishe
 docker pull ghcr.io/rendercache/rendercache:latest     # or :0.5.0
 ```
 
-Docker picks the architecture of the host. The deployment guide's compose example uses it the same way as a local build.
+Docker picks the architecture of the host. The compose example in `deploy/` names the image of its own release, so `docker compose up` runs that version; `docker compose up --build` builds the checkout instead. GitHub publishes a new image privately until the project makes it public; if a pull is refused, build it from source the same way.
 
 The Docker image runs as UID 10001 with Chromium and tini. Its sandbox is enabled by default and requires host support. The isolated CI container smoke explicitly opts out of Chrome's sandbox under a private network and filesystem/resource restrictions; it does not verify sandbox operation on your host. Docker, nginx, Cloudflare routing and quota maintenance instructions are in [docs/deployment.md](docs/deployment.md). No domain or Worker is deployed automatically; the registry image is published, never run anywhere by this repository.
 

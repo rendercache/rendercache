@@ -34,7 +34,8 @@ The record quota counts serialized JSON rather than HTML length. Atomic replacem
 Use the published image, or build it from the tagged source checkout:
 
 ```sh
-docker pull ghcr.io/rendercache/rendercache:latest   # or: docker build -t ghcr.io/rendercache/rendercache:latest .
+# deploy/compose.yaml names the published image of this release; add --build
+# to the compose command below to build this checkout instead.
 export RENDERCACHE_ADMIN_TOKEN='replace-with-a-long-secret'
 # Edit deploy/container.json: origin must be reachable from the container,
 # public_url is your site's public root, and ready_selector must fit your app.
@@ -67,6 +68,6 @@ References used for the examples: nginx map/proxy modules (`https://nginx.org/en
 
 ## Release verification
 
-`bash scripts/build-release.sh dist [GOOS GOARCH]` writes one deterministic archive (`rendercache_<os>_<arch>.tar.gz`, or `.zip` for Windows) and its SHA256SUMS line under `dist`. CI builds the Linux (amd64, arm64), macOS and Windows archives twice from identical source with Go 1.27.2 and compares them, and exercises the extracted Linux binary with a real browser, Docker/Chromium and nginx. Go dependencies are checksum-pinned.
+`bash scripts/build-release.sh dist [GOOS GOARCH]` writes one deterministic archive (`rendercache_<os>_<arch>.tar.gz`, or `.zip` for Windows) and its SHA256SUMS line under `dist`. CI builds the Linux (amd64, arm64), macOS and Windows archives twice from identical source with Go 1.27.2 and compares them, and exercises the extracted Linux amd64 binary with a real browser, Docker/Chromium and nginx; the arm64 archive and image are run by the release workflow (and by the hand-run arm64-check workflow). Go dependencies are checksum-pinned.
 
-Releases are published by `.github/workflows/release.yml`. After CI passes on a push to main whose VERSION has no tag yet, it builds all three archives once on Linux (twice, comparing checksums), runs each extracted executable against real Chrome on its own system, then tags the commit and publishes exactly those files with SHA256SUMS. Archive names carry no version, so `releases/latest/download/<archive>` links always fetch the newest stable release; prereleases are only on the releases page.
+Releases are published by `.github/workflows/release.yml`. After CI passes on a push to main whose VERSION has no tag yet, it builds the four archives once on Linux (twice, comparing checksums), runs each extracted executable against real Chrome on its own system (Debian's Chromium in a container for Linux arm64), builds the container image natively on amd64 and arm64 and runs the container smoke on each, pushes the per-architecture image tags, then tags the commit, publishes exactly those files with SHA256SUMS, and in a separate step publishes the multi-arch `:VERSION` tag (and `:latest` for the newest stable release). That last step only acts when the version's tag points at the commit it built, so re-running a failed release run finishes the image without touching anything else. Archive names carry no version, so `releases/latest/download/<archive>` links always fetch the newest stable release; prereleases are only on the releases page.

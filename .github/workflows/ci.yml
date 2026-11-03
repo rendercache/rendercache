@@ -33,6 +33,7 @@ jobs:
           version=$(tr -d '\r\n' < VERSION)
           grep -qF "var version = \"$version\"" cmd/rendercache/main.go
           grep -qF "ARG VERSION=$version" Dockerfile
+          grep -qF "image: ghcr.io/rendercache/rendercache:$version" deploy/compose.yaml
       - run: go vet ./...
       - name: Locate Chrome for real rendering tests
         run: |

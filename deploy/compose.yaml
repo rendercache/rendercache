@@ -1,8 +1,8 @@
 services:
   rendercache:
-    # The published multi-arch image; `docker compose build` builds the same
-    # image from this checkout instead.
-    image: ghcr.io/rendercache/rendercache:latest
+    # `docker compose up` pulls the published image of this release (amd64 or
+    # arm64); `docker compose up --build` builds this checkout instead.
+    image: ghcr.io/rendercache/rendercache:0.4.0
     build:
       context: ..
     ports:

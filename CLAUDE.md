@@ -33,7 +33,8 @@ The project follows the owner's low maintenance workflow: Claude does the code, 
 
 - To release, raise VERSION (and `version` in cmd/rendercache/main.go and the Dockerfile ARG) on main and update docs/release-notes.md. When CI passes on that commit, .github/workflows/release.yml sees a version with no tag, builds the Linux amd64, macOS arm64 and Windows amd64 archives once on Linux, smoke-tests each on its own system, then tags the commit and publishes "RenderCache vX.Y.Z" with SHA256SUMS. Nothing is published unless every build passes.
 - Archive names carry no version, so https://github.com/rendercache/rendercache/releases/latest/download/rendercache_linux_amd64.tar.gz (and the darwin and windows equivalents) always point at the newest stable release. GitHub's latest link skips prereleases (versions with a hyphen).
-- After a release: check the run, download an archive, verify SHA256SUMS and run the binary; update rendercache.com where it states the version; add the softdevstudio.com note.
+- Since 0.5.0 the release also builds Linux arm64 and the multi-arch image ghcr.io/rendercache/rendercache (VERSION-amd64/-arm64, then VERSION and latest). deploy/compose.yaml names the image of the release: raise it with VERSION (CI checks). If the image step fails after the release was created, re-run the release run's failed jobs: the image step acts only when vVERSION points at the commit built.
+- After a release: check the run, download an archive (amd64 and arm64), verify SHA256SUMS and run the binary; `docker buildx imagetools inspect ghcr.io/rendercache/rendercache:VERSION` lists amd64 and arm64; check an anonymous pull (`curl -s 'https://ghcr.io/token?scope=repository:rendercache/rendercache:pull'` returns a token) before the site tells people to `docker pull`. GitHub creates the package private; an owner makes it public once in its settings. Update rendercache.com where it states the version; add the softdevstudio.com note.
 
 ## Site
 

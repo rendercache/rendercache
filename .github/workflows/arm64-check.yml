@@ -19,7 +19,7 @@ jobs:
           bash scripts/build-release.sh dist linux arm64
           mkdir -p extracted && tar -xzf dist/rendercache_linux_arm64.tar.gz -C extracted
           extracted/rendercache version | grep -F linux/arm64
-          docker run --rm -v "$PWD:/w" -w /w -e RENDERCACHE_TEST_NO_SANDBOX=1 debian:bookworm-slim sh -c \
+          docker run --rm -v "$PWD:/w" -w /w -e RENDERCACHE_TEST_NO_SANDBOX=1 debian:trixie-slim sh -c \
             'apt-get update -qq && apt-get install -y -qq --no-install-recommends chromium python3 ca-certificates fonts-liberation >/dev/null && python3 scripts/smoke.py --binary extracted/rendercache --chrome /usr/bin/chromium' > smoke.txt 2>&1 \
             || { sed 's/^/::error title=arm64 smoke::/' smoke.txt | tail -20; exit 1; }
           echo "::notice title=arm64 smoke::$(tail -1 smoke.txt)"
